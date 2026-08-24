@@ -5,8 +5,8 @@ import urllib.request
 import subprocess
 from typing import Tuple, Optional, Dict, Any
 
-APP_VERSION = "1.2"
-VERSION_CHECK_URL = "https://raw.githubusercontent.com/mohammad-bakhtawer/google_rank_checker/main/version.json"
+APP_VERSION = "1.3"
+VERSION_CHECK_URL = "https://raw.githubusercontent.com/munali027/google_rank_checker/main/version.json"
 
 class AutoUpdater:
     @staticmethod
