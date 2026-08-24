@@ -1,0 +1,566 @@
+import time
+import random
+import re
+import sys
+import io
+import os
+import urllib.parse
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+
+from PySide6.QtCore import QThread, Signal
+
+from playwright.sync_api import sync_playwright, BrowserContext, Page
+from engine.captcha_handler import CaptchaHandler
+from storage.state_manager import StateManager
+
+# Redirect stdout/stderr if None in PyInstaller --windowed mode
+if sys.stdout is None:
+    sys.stdout = io.StringIO()
+if sys.stderr is None:
+    sys.stderr = io.StringIO()
+
+# Fix Playwright browser path in PyInstaller frozen app mode
+if getattr(sys, 'frozen', False):
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+
+# Worldwide Google domain, language, locale and timezone mapping
+COUNTRY_DOMAINS = {
+    "United States": {"base": "https://www.google.com", "gl": "us", "hl": "en", "tz": "America/New_York", "locale": "en-US"},
+    "United Kingdom": {"base": "https://www.google.co.uk", "gl": "uk", "hl": "en", "tz": "Europe/London", "locale": "en-GB"},
+    "Australia": {"base": "https://www.google.com.au", "gl": "au", "hl": "en", "tz": "Australia/Sydney", "locale": "en-AU"},
+    "Canada": {"base": "https://www.google.ca", "gl": "ca", "hl": "en", "tz": "America/Toronto", "locale": "en-CA"},
+    "Pakistan": {"base": "https://www.google.com.pk", "gl": "pk", "hl": "en", "tz": "Asia/Karachi", "locale": "en-PK"},
+    "India": {"base": "https://www.google.co.in", "gl": "in", "hl": "en", "tz": "Asia/Kolkata", "locale": "en-IN"},
+    "United Arab Emirates": {"base": "https://www.google.ae", "gl": "ae", "hl": "en", "tz": "Asia/Dubai", "locale": "en-AE"},
+    "Saudi Arabia": {"base": "https://www.google.com.sa", "gl": "sa", "hl": "ar", "tz": "Asia/Riyadh", "locale": "ar-SA"},
+    "Germany": {"base": "https://www.google.de", "gl": "de", "hl": "de", "tz": "Europe/Berlin", "locale": "de-DE"},
+    "France": {"base": "https://www.google.fr", "gl": "fr", "hl": "fr", "tz": "Europe/Paris", "locale": "fr-FR"},
+    "Spain": {"base": "https://www.google.es", "gl": "es", "hl": "es", "tz": "Europe/Madrid", "locale": "es-ES"},
+    "Italy": {"base": "https://www.google.it", "gl": "it", "hl": "it", "tz": "Europe/Rome", "locale": "it-IT"},
+    "Brazil": {"base": "https://www.google.com.br", "gl": "br", "hl": "pt-BR", "tz": "America/Sao_Paulo", "locale": "pt-BR"},
+    "Netherlands": {"base": "https://www.google.nl", "gl": "nl", "hl": "nl", "tz": "Europe/Amsterdam", "locale": "nl-NL"},
+    "Turkey": {"base": "https://www.google.com.tr", "gl": "tr", "hl": "tr", "tz": "Europe/Istanbul", "locale": "tr-TR"},
+    "Singapore": {"base": "https://www.google.com.sg", "gl": "sg", "hl": "en", "tz": "Asia/Singapore", "locale": "en-SG"},
+    "Japan": {"base": "https://www.google.co.jp", "gl": "jp", "hl": "ja", "tz": "Asia/Tokyo", "locale": "ja-JP"},
+    "South Africa": {"base": "https://www.google.co.za", "gl": "za", "hl": "en", "tz": "Africa/Johannesburg", "locale": "en-ZA"},
+    "New Zealand": {"base": "https://www.google.co.nz", "gl": "nz", "hl": "en", "tz": "Pacific/Auckland", "locale": "en-NZ"},
+    "Ireland": {"base": "https://www.google.ie", "gl": "ie", "hl": "en", "tz": "Europe/Dublin", "locale": "en-IE"},
+    "Switzerland": {"base": "https://www.google.ch", "gl": "ch", "hl": "de", "tz": "Europe/Zurich", "locale": "de-CH"},
+    "Sweden": {"base": "https://www.google.se", "gl": "se", "hl": "sv", "tz": "Europe/Stockholm", "locale": "sv-SE"},
+    "Norway": {"base": "https://www.google.no", "gl": "no", "hl": "no", "tz": "Europe/Oslo", "locale": "nb-NO"},
+    "Denmark": {"base": "https://www.google.dk", "gl": "dk", "hl": "da", "tz": "Europe/Copenhagen", "locale": "da-DK"},
+    "Finland": {"base": "https://www.google.fi", "gl": "fi", "hl": "fi", "tz": "Europe/Helsinki", "locale": "fi-FI"},
+    "Poland": {"base": "https://www.google.pl", "gl": "pl", "hl": "pl", "tz": "Europe/Warsaw", "locale": "pl-PL"},
+    "Portugal": {"base": "https://www.google.pt", "gl": "pt", "hl": "pt", "tz": "Europe/Lisbon", "locale": "pt-PT"},
+    "Austria": {"base": "https://www.google.at", "gl": "at", "hl": "de", "tz": "Europe/Vienna", "locale": "de-AT"},
+    "Belgium": {"base": "https://www.google.be", "gl": "be", "hl": "nl", "tz": "Europe/Brussels", "locale": "nl-BE"},
+    "Mexico": {"base": "https://www.google.com.mx", "gl": "mx", "hl": "es", "tz": "America/Mexico_City", "locale": "es-MX"},
+    "Argentina": {"base": "https://www.google.com.ar", "gl": "ar", "hl": "es", "tz": "America/Argentina/Buenos_Aires", "locale": "es-AR"},
+    "Chile": {"base": "https://www.google.cl", "gl": "cl", "hl": "es", "tz": "America/Santiago", "locale": "es-CL"},
+    "Colombia": {"base": "https://www.google.com.co", "gl": "co", "hl": "es", "tz": "America/Bogota", "locale": "es-CO"},
+    "Malaysia": {"base": "https://www.google.com.my", "gl": "my", "hl": "ms", "tz": "Asia/Kuala_Lumpur", "locale": "ms-MY"},
+    "Indonesia": {"base": "https://www.google.co.id", "gl": "id", "hl": "id", "tz": "Asia/Jakarta", "locale": "id-ID"},
+    "Philippines": {"base": "https://www.google.com.ph", "gl": "ph", "hl": "en", "tz": "Asia/Manila", "locale": "en-PH"},
+    "Thailand": {"base": "https://www.google.co.th", "gl": "th", "hl": "th", "tz": "Asia/Bangkok", "locale": "th-TH"},
+    "Vietnam": {"base": "https://www.google.com.vn", "gl": "vn", "hl": "vi", "tz": "Asia/Ho_Chi_Minh", "locale": "vi-VN"},
+    "Egypt": {"base": "https://www.google.com.eg", "gl": "eg", "hl": "ar", "tz": "Africa/Cairo", "locale": "ar-EG"},
+    "Nigeria": {"base": "https://www.google.com.ng", "gl": "ng", "hl": "en", "tz": "Africa/Lagos", "locale": "en-NG"},
+    "Kenya": {"base": "https://www.google.co.ke", "gl": "ke", "hl": "en", "tz": "Africa/Nairobi", "locale": "en-KE"},
+    "Qatar": {"base": "https://www.google.com.qa", "gl": "qa", "hl": "ar", "tz": "Asia/Qatar", "locale": "ar-QA"},
+    "Kuwait": {"base": "https://www.google.com.kw", "gl": "kw", "hl": "ar", "tz": "Asia/Kuwait", "locale": "ar-KW"},
+    "Oman": {"base": "https://www.google.com.om", "gl": "om", "hl": "ar", "tz": "Asia/Muscat", "locale": "ar-OM"},
+    "Bahrain": {"base": "https://www.google.com.bh", "gl": "bh", "hl": "ar", "tz": "Asia/Bahrain", "locale": "ar-BH"},
+    "Greece": {"base": "https://www.google.gr", "gl": "gr", "hl": "el", "tz": "Europe/Athens", "locale": "el-GR"},
+    "Czech Republic": {"base": "https://www.google.cz", "gl": "cz", "hl": "cs", "tz": "Europe/Prague", "locale": "cs-CZ"},
+    "Romania": {"base": "https://www.google.ro", "gl": "ro", "hl": "ro", "tz": "Europe/Bucharest", "locale": "ro-RO"},
+    "Hungary": {"base": "https://www.google.hu", "gl": "hu", "hl": "hu", "tz": "Europe/Budapest", "locale": "hu-HU"},
+    "South Korea": {"base": "https://www.google.co.kr", "gl": "kr", "hl": "ko", "tz": "Asia/Seoul", "locale": "ko-KR"},
+    "Hong Kong": {"base": "https://www.google.com.hk", "gl": "hk", "hl": "zh-TW", "tz": "Asia/Hong_Kong", "locale": "zh-HK"},
+    "Taiwan": {"base": "https://www.google.com.tw", "gl": "tw", "hl": "zh-TW", "tz": "Asia/Taipei", "locale": "zh-TW"},
+    "Israel": {"base": "https://www.google.co.il", "gl": "il", "hl": "iw", "tz": "Asia/Jerusalem", "locale": "he-IL"},
+    "Morocco": {"base": "https://www.google.co.ma", "gl": "ma", "hl": "ar", "tz": "Africa/Casablanca", "locale": "ar-MA"},
+    "Algeria": {"base": "https://www.google.dz", "gl": "dz", "hl": "ar", "tz": "Africa/Algiers", "locale": "ar-DZ"},
+    "Bangladesh": {"base": "https://www.google.com.bd", "gl": "bd", "hl": "bn", "tz": "Asia/Dhaka", "locale": "bn-BD"},
+    "Sri Lanka": {"base": "https://www.google.lk", "gl": "lk", "hl": "si", "tz": "Asia/Colombo", "locale": "si-LK"},
+    "Nepal": {"base": "https://www.google.com.np", "gl": "np", "hl": "ne", "tz": "Asia/Kathmandu", "locale": "ne-NP"},
+    "Peru": {"base": "https://www.google.com.pe", "gl": "pe", "hl": "es", "tz": "America/Lima", "locale": "es-PE"},
+    "Ukraine": {"base": "https://www.google.com.ua", "gl": "ua", "hl": "uk", "tz": "Europe/Kyiv", "locale": "uk-UA"},
+}
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+]
+
+class RankCheckerThread(QThread):
+    status_changed = Signal(str)
+    keyword_started = Signal(str, int, int)
+    keyword_completed = Signal(dict)
+    progress_updated = Signal(int, int)
+    captcha_detected = Signal(str)
+    captcha_cleared = Signal()
+    log_message = Signal(str)
+    finished_processing = Signal()
+
+    def __init__(
+        self,
+        domain: str,
+        keywords: List[str],
+        country: str,
+        max_pages: int,
+        state_manager: StateManager,
+        proxy_string: str = "",
+        scan_mode: str = "single",
+        override_timezone: bool = False,
+        headless: bool = False
+    ):
+        super().__init__()
+        self.target_domain = self.clean_domain(domain)
+        self.keywords = keywords
+        self.country_name = country
+        self.max_pages = max_pages
+        self.state_manager = state_manager
+        self.proxy_string = proxy_string.strip()
+        self.scan_mode = scan_mode
+        self.override_timezone = override_timezone
+        self.headless = headless
+
+        self.is_paused = False
+        self.is_stopped = False
+        self.in_captcha_state = False
+
+    @staticmethod
+    def clean_domain(domain: str) -> str:
+        d = domain.strip().lower()
+        d = re.sub(r'^https?://', '', d)
+        d = re.sub(r'^www\.', '', d)
+        return d.split('/')[0].split('?')[0]
+
+    def is_domain_match(self, target_domain: str, candidate_url: str) -> bool:
+        target = self.clean_domain(target_domain)
+        cand_domain = self.clean_domain(candidate_url)
+        
+        if not target or not cand_domain:
+            return False
+        
+        if target == cand_domain:
+            return True
+        if cand_domain.endswith("." + target):
+            return True
+        if target.endswith("." + cand_domain):
+            return True
+        if target in cand_domain:
+            return True
+        return False
+
+    def parse_proxy(self) -> Optional[Dict[str, str]]:
+        if not self.proxy_string:
+            return None
+        ps = self.proxy_string.strip()
+        if not ps.startswith("http://") and not ps.startswith("https://") and not ps.startswith("socks5://"):
+            parts = ps.split(":")
+            if len(parts) == 2:
+                return {"server": f"http://{parts[0]}:{parts[1]}"}
+            elif len(parts) == 4:
+                return {
+                    "server": f"http://{parts[0]}:{parts[1]}",
+                    "username": parts[2],
+                    "password": parts[3]
+                }
+        return {"server": ps}
+
+    def pause(self):
+        self.is_paused = True
+        self.status_changed.emit("Paused")
+        self.log_message.emit("[INFO] Processing paused by user.")
+
+    def resume(self):
+        self.is_paused = False
+        self.in_captcha_state = False
+        self.status_changed.emit("Running")
+        self.log_message.emit("[INFO] Processing resumed.")
+
+    def stop(self):
+        self.is_stopped = True
+        self.is_paused = False
+        self.in_captcha_state = False
+        self.status_changed.emit("Stopped")
+        self.log_message.emit("[INFO] Stopping process...")
+
+    def random_delay(self, min_sec: float = 4.0, max_sec: float = 8.0):
+        sec = random.uniform(min_sec, max_sec)
+        time.sleep(sec)
+
+    def check_pause_and_stop(self, page: Optional[Page] = None):
+        while self.is_paused or self.in_captcha_state:
+            if self.is_stopped:
+                break
+            time.sleep(0.5)
+
+    def launch_context(self, p, country_info: Dict[str, Any], proxy_dict: Optional[Dict[str, str]]):
+        """
+        Launches real Chrome/Edge persistent context cleanly.
+        Sets browser locale, language headers, and preferences per selected country.
+        """
+        user_data_dir = os.path.abspath(os.path.join("data", "browser_profile"))
+        os.makedirs(user_data_dir, exist_ok=True)
+        
+        base_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--start-maximized",
+            "--disable-infobars",
+            "--no-first-run",
+            "--no-service-autorun"
+        ]
+        user_agent = random.choice(USER_AGENTS)
+        
+        locale = country_info.get("locale", "en-US")
+        hl = country_info.get("hl", "en")
+
+        context_kwargs: Dict[str, Any] = {
+            "user_data_dir": user_data_dir,
+            "headless": self.headless,
+            "args": base_args,
+            "ignore_default_args": ["--enable-automation"],
+            "user_agent": user_agent,
+            "viewport": {"width": 1280, "height": 800},
+            "locale": locale,
+            "extra_http_headers": {
+                "Accept-Language": f"{hl},{locale};q=0.9,en;q=0.8"
+            }
+        }
+
+        # Apply Timezone Override ONLY if explicitly enabled by user
+        if self.override_timezone:
+            context_kwargs["timezone_id"] = country_info.get("tz", "America/New_York")
+
+        if proxy_dict:
+            context_kwargs["proxy"] = proxy_dict
+
+        # 1. Try real system Google Chrome
+        try:
+            return p.chromium.launch_persistent_context(**context_kwargs, channel="chrome")
+        except Exception:
+            pass
+
+        # 2. Try real system Microsoft Edge
+        try:
+            return p.chromium.launch_persistent_context(**context_kwargs, channel="msedge")
+        except Exception:
+            pass
+
+        # 3. Fallback to default Playwright Chromium
+        return p.chromium.launch_persistent_context(**context_kwargs)
+
+    def run(self):
+        try:
+            self.status_changed.emit("Running")
+            mode_desc = "Single First Match" if self.scan_mode == "single" else "All Occurrences Across Pages"
+            self.log_message.emit(f"[START] Rank checking for domain: '{self.target_domain}' ({len(self.keywords)} keywords) | Mode: {mode_desc}")
+            
+            country_info = COUNTRY_DOMAINS.get(self.country_name, COUNTRY_DOMAINS["United States"])
+            
+            tz_status = f"Enabled ({country_info['tz']})" if self.override_timezone else "Disabled (Natural)"
+            self.log_message.emit(f"[GEO-TARGETING] Country: {self.country_name} | Locale: {country_info['locale']} | Timezone Emulation: {tz_status}")
+
+            proxy_dict = self.parse_proxy()
+            if proxy_dict:
+                self.log_message.emit(f"[PROXY] Routing traffic through: {proxy_dict['server']}")
+
+            with sync_playwright() as p:
+                context = self.launch_context(p, country_info, proxy_dict)
+                page = context.pages[0] if context.pages else context.new_page()
+                
+                # Advanced Stealth script injection (Locale + WebGL + Permissions + Navigator)
+                loc = country_info.get("locale", "en-US")
+                hl = country_info.get("hl", "en")
+
+                page.add_init_script(f"""
+                    Object.defineProperty(navigator, 'webdriver', {{ get: () => undefined }});
+                    window.chrome = {{ runtime: {{}}, app: {{}}, loadTimes: () => {{}}, csi: () => {{}} }};
+                    Object.defineProperty(navigator, 'languages', {{ get: () => ['{loc}', '{hl}', 'en'] }});
+                    
+                    const originalQuery = window.navigator.permissions.query;
+                    window.navigator.permissions.query = (parameters) => (
+                        parameters.name === 'notifications' ?
+                            Promise.resolve({{ state: Notification.permission }}) :
+                            originalQuery(parameters)
+                    );
+                    
+                    const getParameter = WebGLRenderingContext.prototype.getParameter;
+                    WebGLRenderingContext.prototype.getParameter = function(parameter) {{
+                        if (parameter === 37445) return 'NVIDIA Corporation';
+                        if (parameter === 37446) return 'NVIDIA GeForce GTX 1050/PCIe/SSE2';
+                        return getParameter.apply(this, [parameter]);
+                    }};
+                """)
+
+                # Visit homepage initially to set consent/language cookies naturally
+                try:
+                    page.goto(country_info["base"], wait_until="domcontentloaded", timeout=20000)
+                    time.sleep(2.0)
+                except Exception:
+                    pass
+
+                completed_map = self.state_manager.get_completed_keywords()
+                total_kw = len(self.keywords)
+                completed_count = 0
+
+                for idx, keyword in enumerate(self.keywords, start=1):
+                    if self.is_stopped:
+                        break
+
+                    if self.state_manager.is_keyword_completed(keyword):
+                        self.log_message.emit(f"[SKIP] Keyword '{keyword}' already completed. Skipping.")
+                        res_list = completed_map.get(keyword, [])
+                        if isinstance(res_list, list):
+                            for r in res_list:
+                                self.keyword_completed.emit(r)
+                        else:
+                            self.keyword_completed.emit(res_list)
+                        completed_count += 1
+                        self.progress_updated.emit(completed_count, total_kw)
+                        continue
+
+                    self.keyword_started.emit(keyword, idx, total_kw)
+                    self.log_message.emit(f"\n[KEYWORD {idx}/{total_kw}] Searching: '{keyword}'")
+
+                    results = self.process_keyword(page, keyword, country_info)
+                    
+                    if self.is_stopped:
+                        break
+
+                    # Record results list in state manager by keyword string
+                    self.state_manager.record_result(keyword, results)
+                    for r in results:
+                        self.keyword_completed.emit(r)
+                    
+                    completed_count += 1
+                    self.progress_updated.emit(completed_count, total_kw)
+
+                    self.random_delay(4.5, 8.0)
+
+                try:
+                    context.close()
+                except Exception:
+                    pass
+
+            if not self.is_stopped:
+                self.status_changed.emit("Completed")
+                self.log_message.emit("\n[FINISHED] All keywords processed successfully.")
+                
+        except Exception as e:
+            self.log_message.emit(f"\n[CRITICAL ERROR] Execution failed: {e}")
+            self.status_changed.emit("Error")
+        finally:
+            self.finished_processing.emit()
+
+    def process_keyword(self, page: Page, keyword: str, country_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        base_url = country_info["base"]
+        gl = country_info["gl"]
+        hl = country_info["hl"]
+
+        found_results = []
+
+        for page_num in range(1, self.max_pages + 1):
+            if self.is_stopped:
+                break
+
+            self.check_pause_and_stop(page)
+            if self.is_stopped:
+                break
+
+            start_param = (page_num - 1) * 10
+            query_params = {
+                "q": keyword,
+                "gl": gl,
+                "hl": hl,
+                "pws": "0",
+                "start": str(start_param)
+            }
+            search_url = f"{base_url}/search?{urllib.parse.urlencode(query_params)}"
+            
+            self.log_message.emit(f"  -> Checking Google Page {page_num}...")
+            
+            try:
+                page.goto(search_url, wait_until="domcontentloaded", timeout=25000)
+                time.sleep(1.8)
+
+                # CAPTCHA / Unusual Traffic Detection
+                if CaptchaHandler.is_captcha_present(page):
+                    self.log_message.emit(f"  [!] CAPTCHA / Rate limit detected on page {page_num}.")
+                    self.captcha_detected.emit(f"CAPTCHA encountered for '{keyword}' on page {page_num}.")
+                    self.status_changed.emit("CAPTCHA REQUIRED")
+                    
+                    CaptchaHandler.bring_browser_to_front(page)
+                    self.in_captcha_state = True
+                    
+                    while self.in_captcha_state and not self.is_stopped:
+                        time.sleep(1.0)
+                        try:
+                            current_url = page.url.lower()
+                            has_search = page.locator("#search, #rso, #center_col, textarea[name='q'], input[name='q']").count() > 0
+                            if ("/search" in current_url or has_search) and not CaptchaHandler.is_captcha_present(page):
+                                self.log_message.emit("  [+] CAPTCHA cleared! Automatically resuming search...")
+                                self.in_captcha_state = False
+                                self.captcha_cleared.emit()
+                                self.status_changed.emit("Running")
+                                break
+                        except Exception:
+                            pass
+
+                    if self.is_stopped:
+                        return [{
+                            "keyword": keyword,
+                            "domain": self.target_domain,
+                            "rank": "N/A",
+                            "google_page": "N/A",
+                            "ranking_url": "",
+                            "target_country": self.country_name,
+                            "checked_at": now_str,
+                            "status": "CAPTCHA"
+                        }]
+                    
+                    time.sleep(1.5)
+
+                # Extract organic links
+                organic_links = self.extract_organic_links(page)
+                self.log_message.emit(f"    (Found {len(organic_links)} organic results on Page {page_num})")
+                
+                # Check for target domain matches
+                for local_idx, link_info in enumerate(organic_links, start=1):
+                    global_rank = (page_num - 1) * 10 + local_idx
+                    url = link_info["url"]
+
+                    if self.is_domain_match(self.target_domain, url):
+                        self.log_message.emit(f"  [★ FOUND] Domain '{self.target_domain}' found at Rank #{global_rank} (Page {page_num}, Pos {local_idx})!")
+                        self.log_message.emit(f"    URL: {url}")
+                        
+                        match_entry = {
+                            "keyword": keyword,
+                            "domain": self.target_domain,
+                            "rank": global_rank,
+                            "google_page": page_num,
+                            "ranking_url": url,
+                            "target_country": self.country_name,
+                            "checked_at": now_str,
+                            "status": "Found"
+                        }
+                        found_results.append(match_entry)
+
+                        if self.scan_mode == "single":
+                            return found_results
+
+            except Exception as e:
+                self.log_message.emit(f"  [ERROR] Error checking page {page_num}: {e}")
+                
+            self.random_delay(2.5, 5.0)
+
+        # Return results list or default Not Found entry
+        if found_results:
+            return found_results
+        
+        self.log_message.emit(f"  [-] Domain '{self.target_domain}' not found in top {self.max_pages} pages ({self.max_pages * 10} results).")
+        return [{
+            "keyword": keyword,
+            "domain": self.target_domain,
+            "rank": "N/A",
+            "google_page": "N/A",
+            "ranking_url": "",
+            "target_country": self.country_name,
+            "checked_at": now_str,
+            "status": "Not Found"
+        }]
+
+    def extract_organic_links(self, page: Page) -> List[Dict[str, str]]:
+        """
+        Extracts top organic search result links from Google SERP.
+        Unwraps Google redirect URLs (/url?q=...) and filters out Google internal links.
+        """
+        results = []
+        seen_urls = set()
+
+        try:
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(0.4)
+        except Exception:
+            pass
+
+        try:
+            # Use JS to extract all raw hrefs from organic result blocks
+            raw_links = page.evaluate("""
+                () => {
+                    const links = [];
+                    const selectors = [
+                        '#rso a:has(h3)',
+                        '#search a:has(h3)',
+                        'div.MjjYud a:has(h3)',
+                        'div.yuRUbf > a',
+                        'a[jsname="UWckNb"]',
+                        '#search div.g a[href^="http"]',
+                        '#search div.g a[href^="/url"]'
+                    ];
+                    
+                    const elements = document.querySelectorAll(selectors.join(', '));
+                    elements.forEach(el => {
+                        // Skip ads / sponsored elements
+                        let parent = el.closest('div[data-text-ad], .uEvd2e, [aria-label*="Sponsored"], [aria-label*="Ads"], .vdL23');
+                        if (parent) return;
+                        
+                        let text = (el.innerText || '').trim();
+                        if (text.startsWith('Sponsored') || text.startsWith('Ad ')) return;
+                        
+                        let href = el.getAttribute('href') || el.href;
+                        if (href) {
+                            links.push({ href: href, title: text });
+                        }
+                    });
+                    return links;
+                }
+            """)
+
+            for item in raw_links:
+                href = item.get("href", "").strip()
+                title = item.get("title", "").strip()
+
+                if not href:
+                    continue
+
+                # Unwrap Google /url?q= redirect links
+                if "/url?" in href or "/url?q=" in href:
+                    try:
+                        parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+                        if "q" in parsed_qs and parsed_qs["q"]:
+                            href = parsed_qs["q"][0]
+                    except Exception:
+                        pass
+
+                if not href.startswith("http://") and not href.startswith("https://"):
+                    continue
+
+                # Parse domain to ensure we don't include Google internal pages
+                parsed_domain = urllib.parse.urlparse(href).netloc.lower()
+                
+                # Skip Google's own domains & services
+                is_google_domain = any(
+                    g_dom in parsed_domain for g_dom in [
+                        "google.com", "google.co", "googleusercontent.com",
+                        "gstatic.com", "youtube.com", "schema.org"
+                    ]
+                )
+                if is_google_domain:
+                    continue
+
+                clean_href = href.split("?utm_")[0].split("&utm_")[0]
+
+                if clean_href not in seen_urls:
+                    seen_urls.add(clean_href)
+                    results.append({"url": clean_href, "title": title})
+
+        except Exception as e:
+            self.log_message.emit(f"    [WARN] Exception extracting links: {e}")
+
+        return results

@@ -1,0 +1,4 @@
+playwright>=1.40.0
+PySide6>=6.6.0
+pandas>=2.0.0
+pyinstaller>=6.3.0
