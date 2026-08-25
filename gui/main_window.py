@@ -13,7 +13,7 @@ from PySide6.QtGui import QColor, QFont, QIcon
 
 from gui.styles import DARK_THEME_QSS
 from utils.csv_handler import CSVHandler
-from utils.updater import AutoUpdater
+from utils.updater import AutoUpdater, UpdateDownloadThread
 from storage.state_manager import StateManager
 from engine.rank_checker import RankCheckerThread, COUNTRY_DOMAINS
 
@@ -28,16 +28,18 @@ class UpdateCheckThread(QThread):
 
 class UpdateDialog(QDialog):
     """
-    Dialog displaying Update Details & 1-Click Install Button.
+    Dialog displaying Update Details, Live Download Progress Bar & Asynchronous Download Thread.
+    Keeps UI 100% responsive without showing '(Not Responding)'.
     """
     def __init__(self, current_ver: str, latest_ver: str, notes: str, download_url: str, expected_sha256: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"App Update Available - v{latest_ver}")
-        self.resize(480, 340)
+        self.resize(500, 380)
         self.setStyleSheet(DARK_THEME_QSS)
 
         self.download_url = download_url
         self.expected_sha256 = expected_sha256
+        self.dl_thread: Optional[UpdateDownloadThread] = None
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -63,17 +65,28 @@ class UpdateDialog(QDialog):
         txt_notes.setStyleSheet("background-color: #181825; border: 1px solid #313244; color: #CDD6F4;")
         layout.addWidget(txt_notes)
 
+        # Live Download Progress Bar & Status Text
+        self.lbl_progress_status = QLabel("")
+        self.lbl_progress_status.setStyleSheet("color: #89B4FA; font-weight: bold;")
+        self.lbl_progress_status.setVisible(False)
+        layout.addWidget(self.lbl_progress_status)
+
+        self.dl_progress_bar = QProgressBar()
+        self.dl_progress_bar.setValue(0)
+        self.dl_progress_bar.setVisible(False)
+        layout.addWidget(self.dl_progress_bar)
+
         # Buttons
         btn_layout = QHBoxLayout()
-        btn_close = QPushButton("Later")
-        btn_close.clicked.connect(self.reject)
+        self.btn_close = QPushButton("Later")
+        self.btn_close.clicked.connect(self.reject)
 
         self.btn_install = QPushButton("⚡ Download & Install Update")
         self.btn_install.setObjectName("btnStart")
         self.btn_install.clicked.connect(self.on_install)
 
         btn_layout.addStretch()
-        btn_layout.addWidget(btn_close)
+        btn_layout.addWidget(self.btn_close)
         btn_layout.addWidget(self.btn_install)
         layout.addLayout(btn_layout)
 
@@ -83,13 +96,34 @@ class UpdateDialog(QDialog):
             return
 
         self.btn_install.setEnabled(False)
-        self.btn_install.setText("Downloading & Verifying Update...")
-        
-        success, msg = AutoUpdater.apply_update_and_restart(self.download_url, self.expected_sha256)
+        self.btn_close.setEnabled(False)
+        self.lbl_progress_status.setVisible(True)
+        self.dl_progress_bar.setVisible(True)
+        self.lbl_progress_status.setText("Initializing update package download...")
+
+        self.dl_thread = UpdateDownloadThread(self.download_url, self.expected_sha256)
+        self.dl_thread.progress_updated.connect(self.on_download_progress)
+        self.dl_thread.download_finished.connect(self.on_download_finished)
+        self.dl_thread.start()
+
+    @Slot(int, int, str, int)
+    def on_download_progress(self, downloaded: int, total: int, speed_str: str, percent: int):
+        self.dl_progress_bar.setValue(percent)
+        dl_mb = downloaded / (1024 * 1024)
+        tot_mb = total / (1024 * 1024)
+        if total > 0:
+            self.lbl_progress_status.setText(f"Downloading Update: {dl_mb:.1f} MB / {tot_mb:.1f} MB ({percent}%) @ {speed_str}")
+        else:
+            self.lbl_progress_status.setText(f"Downloading Update: {dl_mb:.1f} MB @ {speed_str}")
+
+    @Slot(bool, str)
+    def on_download_finished(self, success: bool, msg: str):
         if not success:
             QMessageBox.critical(self, "Update Status", msg)
             self.btn_install.setEnabled(True)
-            self.btn_install.setText("⚡ Download & Install Update")
+            self.btn_close.setEnabled(True)
+            self.lbl_progress_status.setVisible(False)
+            self.dl_progress_bar.setVisible(False)
 
 
 class CountrySelectDialog(QDialog):

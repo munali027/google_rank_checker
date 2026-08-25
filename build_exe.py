@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import os
+import sign_exe
 
 def build():
     print("=" * 60)
@@ -12,7 +13,10 @@ def build():
         import create_icon
         create_icon.create_app_icon()
 
-    # PyInstaller command with custom icon and assets
+    # Ensure version_info.txt exists
+    version_file = "version_info.txt"
+
+    # PyInstaller command with custom icon, version metadata, and assets
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
@@ -20,6 +24,7 @@ def build():
         "--windowed",
         "--name", "GoogleRankChecker",
         "--icon", "assets/icon.ico",
+        "--version-file", version_file,
         "--add-data", "gui;gui",
         "--add-data", "engine;engine",
         "--add-data", "storage;storage",
@@ -32,8 +37,12 @@ def build():
     res = subprocess.run(cmd)
 
     if res.returncode == 0:
+        exe_path = os.path.join("dist", "GoogleRankChecker", "GoogleRankChecker.exe")
+        print("\nSigning executable to eliminate Unknown Installer warning & Defender False Positives...")
+        sign_exe.sign_executable(exe_path)
+
         print("\n" + "=" * 60)
-        print("SUCCESS! Executable built in 'dist/GoogleRankChecker/GoogleRankChecker.exe'")
+        print("SUCCESS! Executable built & signed in 'dist/GoogleRankChecker/GoogleRankChecker.exe'")
         print("=" * 60)
     else:
         print("\nBuild failed with return code:", res.returncode)

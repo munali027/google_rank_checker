@@ -1,6 +1,6 @@
 {
-  "version": "1.4",
-  "release_notes": "v1.4 Update:\n- Integrated SHA-256 Checksum Verification\n- Robust Download & Extraction Error Handling\n- Post-Update Version Verification\n- Native Multi-Lingual & Country Language Preferences",
+  "version": "1.5",
+  "release_notes": "v1.5 Update:\n- Official Company Metadata: Agentik Marketing\n- Legal Rights & Copyright: Mohammad A. Bakhtawer\n- Asynchronous Live Download Progress Bar & Speed Tracking\n- Authenticode Code Signing Certificate Protection\n- PyInstaller Executable Metadata & Defender False Positive Shield",
   "download_url": "https://github.com/ma-bakhtawer/google_rank_checker/releases/latest/download/GoogleRankChecker.zip",
   "sha256": ""
 }

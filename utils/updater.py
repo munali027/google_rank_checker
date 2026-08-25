@@ -1,14 +1,111 @@
 import json
 import os
 import sys
+import time
 import urllib.request
 import subprocess
 import hashlib
 import zipfile
 from typing import Tuple, Optional, Dict, Any
 
-APP_VERSION = "1.4"
+from PySide6.QtCore import QThread, Signal
+
+APP_VERSION = "1.5"
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/ma-bakhtawer/google_rank_checker/main/version.json"
+
+class UpdateDownloadThread(QThread):
+    """
+    Asynchronous Thread for Downloading Update ZIP with live progress & speed calculations.
+    Keeps Qt GUI 100% responsive without showing '(Not Responding)'.
+    """
+    progress_updated = Signal(int, int, str, int)  # (downloaded_bytes, total_bytes, speed_str, percent)
+    download_finished = Signal(bool, str)          # (success, message)
+
+    def __init__(self, download_url: str, expected_sha256: str = ""):
+        super().__init__()
+        self.download_url = download_url
+        self.expected_sha256 = expected_sha256.strip().lower()
+
+    def run(self):
+        update_dir = os.path.abspath(os.path.join("data", "updates"))
+        os.makedirs(update_dir, exist_ok=True)
+        zip_path = os.path.join(update_dir, "update.zip")
+
+        # 1. Chunked HTTP Download with live progress calculation
+        try:
+            req = urllib.request.Request(
+                self.download_url,
+                headers={'User-Agent': 'GoogleRankChecker-AutoUpdater/1.4'}
+            )
+            with urllib.request.urlopen(req, timeout=30) as response:
+                total_size = int(response.headers.get('Content-Length', 0))
+                downloaded = 0
+                chunk_size = 65536
+                start_time = time.time()
+                
+                with open(zip_path, 'wb') as out_file:
+                    while True:
+                        chunk = response.read(chunk_size)
+                        if not chunk:
+                            break
+                        out_file.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        elapsed = time.time() - start_time
+                        speed_mbps = (downloaded / (1024 * 1024)) / elapsed if elapsed > 0 else 0.0
+                        pct = int((downloaded / total_size) * 100) if total_size > 0 else 0
+                        
+                        self.progress_updated.emit(downloaded, total_size, f"{speed_mbps:.1f} MB/s", pct)
+
+        except Exception:
+            self.download_finished.emit(False, "Update could not be downloaded. Please check your internet connection and try again.")
+            return
+
+        # 2. Verify ZIP Integrity
+        if not os.path.exists(zip_path) or os.path.getsize(zip_path) < 100:
+            self.download_finished.emit(False, "Update could not be downloaded. Please check your internet connection and try again.")
+            return
+
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                if zip_ref.testzip() is not None:
+                    self.download_finished.emit(False, "Update failed. Your current version has not been changed.")
+                    return
+        except Exception:
+            self.download_finished.emit(False, "Update failed. Your current version has not been changed.")
+            return
+
+        # 3. SHA-256 Checksum Verification
+        if self.expected_sha256:
+            actual_sha256 = AutoUpdater.compute_sha256(zip_path)
+            if actual_sha256 != self.expected_sha256:
+                self.download_finished.emit(False, "Update package verification failed (SHA-256 mismatch). Please try downloading again.")
+                return
+
+        # 4. Create Batch Script & Launch Restart
+        try:
+            app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            bat_path = os.path.join(update_dir, "run_update.bat")
+            exe_path = os.path.join(app_dir, "GoogleRankChecker.exe")
+            
+            bat_script = f"""@echo off
+timeout /t 2 /nobreak > nul
+powershell -Command "Expand-Archive -Path '{zip_path}' -DestinationPath '{app_dir}' -Force"
+if exist "{exe_path}" (
+    start "" "{exe_path}"
+)
+del "{zip_path}"
+del "%~f0"
+"""
+            with open(bat_path, "w", encoding="utf-8") as f:
+                f.write(bat_script)
+                
+            subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
+            self.download_finished.emit(True, "Update applied successfully! Restarting application...")
+            sys.exit(0)
+        except Exception:
+            self.download_finished.emit(False, "Update failed. Your current version has not been changed.")
+
 
 class AutoUpdater:
     @staticmethod
@@ -60,66 +157,3 @@ class AutoUpdater:
             return l_parts > c_parts
         except Exception:
             return False
-
-    @staticmethod
-    def apply_update_and_restart(download_url: str, expected_sha256: str = "") -> Tuple[bool, str]:
-        """
-        Downloads update package, verifies SHA-256 hash & ZIP integrity,
-        generates updater script, and restarts app cleanly.
-        Returns: (success: bool, user_message: str)
-        """
-        update_dir = os.path.abspath(os.path.join("data", "updates"))
-        os.makedirs(update_dir, exist_ok=True)
-        zip_path = os.path.join(update_dir, "update.zip")
-
-        # 1. Download Update ZIP
-        try:
-            req = urllib.request.Request(
-                download_url,
-                headers={'User-Agent': 'GoogleRankChecker-AutoUpdater/1.4'}
-            )
-            with urllib.request.urlopen(req, timeout=30) as response, open(zip_path, 'wb') as out_file:
-                out_file.write(response.read())
-        except Exception as e:
-            return False, "Update could not be downloaded. Please check your internet connection and try again."
-
-        # 2. Verify ZIP Integrity
-        if not os.path.exists(zip_path) or os.path.getsize(zip_path) < 100:
-            return False, "Update could not be downloaded. Please check your internet connection and try again."
-
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                if zip_ref.testzip() is not None:
-                    return False, "Update failed. Your current version has not been changed."
-        except Exception:
-            return False, "Update failed. Your current version has not been changed."
-
-        # 3. SHA-256 Checksum Verification
-        if expected_sha256:
-            actual_sha256 = AutoUpdater.compute_sha256(zip_path)
-            if actual_sha256 != expected_sha256.lower():
-                return False, "Update package verification failed (SHA-256 mismatch). Please try downloading again."
-
-        # 4. Create Batch Script for Safe File Overwrite & Restart
-        try:
-            app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-            bat_path = os.path.join(update_dir, "run_update.bat")
-            exe_path = os.path.join(app_dir, "GoogleRankChecker.exe")
-            
-            bat_script = f"""@echo off
-timeout /t 2 /nobreak > nul
-powershell -Command "Expand-Archive -Path '{zip_path}' -DestinationPath '{app_dir}' -Force"
-if exist "{exe_path}" (
-    start "" "{exe_path}"
-)
-del "{zip_path}"
-del "%~f0"
-"""
-            with open(bat_path, "w", encoding="utf-8") as f:
-                f.write(bat_script)
-                
-            subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
-            sys.exit(0)
-            return True, "Update initiated successfully."
-        except Exception:
-            return False, "Update failed. Your current version has not been changed."
