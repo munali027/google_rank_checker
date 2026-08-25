@@ -19,24 +19,25 @@ from engine.rank_checker import RankCheckerThread, COUNTRY_DOMAINS
 
 
 class UpdateCheckThread(QThread):
-    update_checked = Signal(bool, str, str, str)
+    update_checked = Signal(bool, str, str, str, str)
 
     def run(self):
-        has_update, latest_ver, notes, download_url = AutoUpdater.check_for_update()
-        self.update_checked.emit(has_update, latest_ver, notes, download_url)
+        has_update, latest_ver, notes, download_url, sha256 = AutoUpdater.check_for_update()
+        self.update_checked.emit(has_update, latest_ver, notes, download_url, sha256)
 
 
 class UpdateDialog(QDialog):
     """
     Dialog displaying Update Details & 1-Click Install Button.
     """
-    def __init__(self, current_ver: str, latest_ver: str, notes: str, download_url: str, parent=None):
+    def __init__(self, current_ver: str, latest_ver: str, notes: str, download_url: str, expected_sha256: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"App Update Available - v{latest_ver}")
-        self.resize(480, 320)
+        self.resize(480, 340)
         self.setStyleSheet(DARK_THEME_QSS)
 
         self.download_url = download_url
+        self.expected_sha256 = expected_sha256
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -78,15 +79,15 @@ class UpdateDialog(QDialog):
 
     def on_install(self):
         if not self.download_url:
-            QMessageBox.warning(self, "Update Error", "Download URL is missing or invalid.")
+            QMessageBox.warning(self, "Update Error", "Update could not be downloaded. Please check your internet connection and try again.")
             return
 
         self.btn_install.setEnabled(False)
-        self.btn_install.setText("Downloading Update...")
+        self.btn_install.setText("Downloading & Verifying Update...")
         
-        success = AutoUpdater.apply_update_and_restart(self.download_url)
+        success, msg = AutoUpdater.apply_update_and_restart(self.download_url, self.expected_sha256)
         if not success:
-            QMessageBox.critical(self, "Update Failed", "Failed to download update automatically. Please check your internet connection.")
+            QMessageBox.critical(self, "Update Status", msg)
             self.btn_install.setEnabled(True)
             self.btn_install.setText("⚡ Download & Install Update")
 
@@ -225,6 +226,7 @@ class MainWindow(QMainWindow):
         self.latest_ver: str = AutoUpdater.get_current_version()
         self.release_notes: str = ""
         self.download_url: str = ""
+        self.expected_sha256: str = ""
         self.has_update_available: bool = False
 
         self.init_ui()
@@ -460,12 +462,13 @@ class MainWindow(QMainWindow):
         self.update_thread.update_checked.connect(self.on_update_check_result)
         self.update_thread.start()
 
-    @Slot(bool, str, str, str)
-    def on_update_check_result(self, has_update: bool, latest_ver: str, notes: str, download_url: str):
+    @Slot(bool, str, str, str, str)
+    def on_update_check_result(self, has_update: bool, latest_ver: str, notes: str, download_url: str, expected_sha256: str):
         self.has_update_available = has_update
         self.latest_ver = latest_ver
         self.release_notes = notes
         self.download_url = download_url
+        self.expected_sha256 = expected_sha256
 
         if has_update:
             self.btn_update.setText(f"Update App 🔴 (v{latest_ver})")
@@ -493,6 +496,7 @@ class MainWindow(QMainWindow):
                 latest_ver=self.latest_ver,
                 notes=self.release_notes,
                 download_url=self.download_url,
+                expected_sha256=self.expected_sha256,
                 parent=self
             )
             dlg.exec()

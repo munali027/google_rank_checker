@@ -1,5 +1,6 @@
 {
-  "version": "1.3",
-  "release_notes": "Added Universal Multi-lingual Arabic support, Clean Country Preferences, and Red-Dot Auto Update.",
-  "download_url": "https://github.com/ma-bakhtawer/google_rank_checker/releases/download/v1.3/GoogleRankChecker.zip"
+  "version": "1.4",
+  "release_notes": "v1.4 Update:\n- Integrated SHA-256 Checksum Verification\n- Robust Download & Extraction Error Handling\n- Post-Update Version Verification\n- Native Multi-Lingual & Country Language Preferences",
+  "download_url": "https://github.com/ma-bakhtawer/google_rank_checker/releases/latest/download/GoogleRankChecker.zip",
+  "sha256": ""
 }
