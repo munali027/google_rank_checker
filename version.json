@@ -1,6 +1,6 @@
 {
-  "version": "1.5",
-  "release_notes": "v1.5 Update:\n- Official Company Metadata: Agentik Marketing\n- Legal Rights & Copyright: Mohammad A. Bakhtawer\n- Asynchronous Live Download Progress Bar & Speed Tracking\n- Authenticode Code Signing Certificate Protection\n- PyInstaller Executable Metadata & Defender False Positive Shield",
+  "version": "1.6",
+  "release_notes": "v1.6 Update:\n- Integrated High-Definition Professional Vector Icons (Globe, Play, Stop, Pause, Refresh, Trash, Export)\n- Asynchronous Live Download Progress Bar & Speed Tracking\n- Official Agentik Marketing & Mohammad A. Bakhtawer Authenticode Digital Signature",
   "download_url": "https://github.com/ma-bakhtawer/google_rank_checker/releases/latest/download/GoogleRankChecker.zip",
   "sha256": ""
 }

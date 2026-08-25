@@ -10,7 +10,7 @@ from typing import Tuple, Optional, Dict, Any
 
 from PySide6.QtCore import QThread, Signal
 
-APP_VERSION = "1.5"
+APP_VERSION = "1.6"
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/ma-bakhtawer/google_rank_checker/main/version.json"
 
 class UpdateDownloadThread(QThread):

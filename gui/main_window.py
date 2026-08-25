@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QGroupBox, QMessageBox, QFrame, QDialog, QListWidget,
     QListWidgetItem, QRadioButton, QButtonGroup, QCheckBox
 )
-from PySide6.QtCore import Qt, Slot, QThread, Signal
+from PySide6.QtCore import Qt, Slot, QThread, Signal, QSize
 from PySide6.QtGui import QColor, QFont, QIcon
 
 from gui.styles import DARK_THEME_QSS
@@ -17,6 +17,12 @@ from utils.updater import AutoUpdater, UpdateDownloadThread
 from storage.state_manager import StateManager
 from engine.rank_checker import RankCheckerThread, COUNTRY_DOMAINS
 
+def get_asset_icon(icon_name: str) -> QIcon:
+    """Helper to fetch crisp HD vector icon from assets folder."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", icon_name)
+    if os.path.exists(path):
+        return QIcon(path)
+    return QIcon()
 
 class UpdateCheckThread(QThread):
     update_checked = Signal(bool, str, str, str, str)
@@ -81,7 +87,9 @@ class UpdateDialog(QDialog):
         self.btn_close = QPushButton("Later")
         self.btn_close.clicked.connect(self.reject)
 
-        self.btn_install = QPushButton("⚡ Download & Install Update")
+        self.btn_install = QPushButton("Download & Install Update")
+        self.btn_install.setIcon(get_asset_icon("icon_refresh.png"))
+        self.btn_install.setIconSize(QSize(18, 18))
         self.btn_install.setObjectName("btnStart")
         self.btn_install.clicked.connect(self.on_install)
 
@@ -286,9 +294,11 @@ class MainWindow(QMainWindow):
         self.txt_domain.setPlaceholderText("e.g. example.com")
         input_grid.addWidget(self.txt_domain, 0, 1)
 
-        # Target Country (Row 0)
+        # Target Country (Row 0) with HD Vector Globe Icon
         input_grid.addWidget(QLabel("Target Country:"), 0, 2)
-        self.btn_select_country = QPushButton(f"🌐 {self.selected_country}  ▾")
+        self.btn_select_country = QPushButton(f"  {self.selected_country}  ▾")
+        self.btn_select_country.setIcon(get_asset_icon("icon_globe.png"))
+        self.btn_select_country.setIconSize(QSize(18, 18))
         self.btn_select_country.setStyleSheet("""
             QPushButton {
                 text-align: left;
@@ -380,29 +390,39 @@ class MainWindow(QMainWindow):
         # ---------------- 3. Controls & Progress ----------------
         controls_layout = QHBoxLayout()
         
-        # Combined Start / Stop Button
-        self.btn_start_stop = QPushButton("▶ Start Checking")
+        # Combined Start / Stop Button with HD Vector Icon
+        self.btn_start_stop = QPushButton(" Start Checking")
+        self.btn_start_stop.setIcon(get_asset_icon("icon_play.png"))
+        self.btn_start_stop.setIconSize(QSize(18, 18))
         self.btn_start_stop.setObjectName("btnStart")
         self.btn_start_stop.clicked.connect(self.on_toggle_start_stop)
         
-        # Combined Pause / Resume Button
-        self.btn_pause_resume = QPushButton("⏸ Pause")
+        # Combined Pause / Resume Button with HD Vector Icon
+        self.btn_pause_resume = QPushButton(" Pause")
+        self.btn_pause_resume.setIcon(get_asset_icon("icon_pause.png"))
+        self.btn_pause_resume.setIconSize(QSize(18, 18))
         self.btn_pause_resume.setObjectName("btnPause")
         self.btn_pause_resume.setEnabled(False)
         self.btn_pause_resume.clicked.connect(self.on_toggle_pause_resume)
 
-        # Clear Session Button
-        self.btn_clear_session = QPushButton("Clear Session Data")
+        # Clear Session Button with HD Vector Icon
+        self.btn_clear_session = QPushButton(" Clear Session Data")
+        self.btn_clear_session.setIcon(get_asset_icon("icon_trash.png"))
+        self.btn_clear_session.setIconSize(QSize(18, 18))
         self.btn_clear_session.setObjectName("btnClearSession")
         self.btn_clear_session.setToolTip("Deletes saved progress JSON state & clears table")
         self.btn_clear_session.clicked.connect(self.on_clear_session)
 
-        # Export CSV Button
-        self.btn_export = QPushButton("Export CSV")
+        # Export CSV Button with HD Vector Icon
+        self.btn_export = QPushButton(" Export CSV")
+        self.btn_export.setIcon(get_asset_icon("icon_export.png"))
+        self.btn_export.setIconSize(QSize(18, 18))
         self.btn_export.clicked.connect(self.on_export_csv)
 
-        # Update App Button with Red Dot Badge
-        self.btn_update = QPushButton(f"🔄 Update App (v{AutoUpdater.get_current_version()})")
+        # Update App Button with HD Vector Icon & Red Dot Badge
+        self.btn_update = QPushButton(f" Update App (v{AutoUpdater.get_current_version()})")
+        self.btn_update.setIcon(get_asset_icon("icon_refresh.png"))
+        self.btn_update.setIconSize(QSize(18, 18))
         self.btn_update.setToolTip("Check for new application updates")
         self.btn_update.setStyleSheet("""
             QPushButton {
@@ -505,7 +525,9 @@ class MainWindow(QMainWindow):
         self.expected_sha256 = expected_sha256
 
         if has_update:
-            self.btn_update.setText(f"Update App 🔴 (v{latest_ver})")
+            self.btn_update.setText(f" Update App 🔴 (v{latest_ver})")
+            self.btn_update.setIcon(get_asset_icon("icon_refresh.png"))
+            self.btn_update.setIconSize(QSize(18, 18))
             self.btn_update.setStyleSheet("""
                 QPushButton {
                     background-color: #F38BA8;
@@ -549,7 +571,8 @@ class MainWindow(QMainWindow):
             self.txt_csv_path.setText(st["csv_path"])
         if st.get("target_country"):
             self.selected_country = st["target_country"]
-            self.btn_select_country.setText(f"🌐 {self.selected_country}  ▾")
+            self.btn_select_country.setText(f"  {self.selected_country}  ▾")
+            self.btn_select_country.setIcon(get_asset_icon("icon_globe.png"))
         if st.get("proxy"):
             self.txt_proxy.setText(st["proxy"])
         if st.get("max_pages"):
@@ -583,7 +606,8 @@ class MainWindow(QMainWindow):
         dlg = CountrySelectDialog(current_country=self.selected_country, parent=self)
         if dlg.exec() == QDialog.Accepted:
             self.selected_country = dlg.selected_country
-            self.btn_select_country.setText(f"🌐 {self.selected_country}  ▾")
+            self.btn_select_country.setText(f"  {self.selected_country}  ▾")
+            self.btn_select_country.setIcon(get_asset_icon("icon_globe.png"))
             self.log_msg(f"[CONFIG] Target country updated to: {self.selected_country}")
 
     @Slot()
@@ -688,24 +712,31 @@ class MainWindow(QMainWindow):
 
     def update_btn_start_stop(self, is_running: bool):
         if is_running:
-            self.btn_start_stop.setText("⏹ Stop Checking")
+            self.btn_start_stop.setText(" Stop Checking")
+            self.btn_start_stop.setIcon(get_asset_icon("icon_stop.png"))
             self.btn_start_stop.setObjectName("btnStop")
         else:
-            self.btn_start_stop.setText("▶ Start Checking")
+            self.btn_start_stop.setText(" Start Checking")
+            self.btn_start_stop.setIcon(get_asset_icon("icon_play.png"))
             self.btn_start_stop.setObjectName("btnStart")
+        self.btn_start_stop.setIconSize(QSize(18, 18))
         self.btn_start_stop.setStyle(self.btn_start_stop.style())
 
     def update_btn_pause_resume(self, is_running: bool, is_paused: bool):
         self.btn_pause_resume.setEnabled(is_running)
         if not is_running:
-            self.btn_pause_resume.setText("⏸ Pause")
+            self.btn_pause_resume.setText(" Pause")
+            self.btn_pause_resume.setIcon(get_asset_icon("icon_pause.png"))
             self.btn_pause_resume.setObjectName("btnPause")
         elif is_paused:
-            self.btn_pause_resume.setText("▶ Resume")
+            self.btn_pause_resume.setText(" Resume")
+            self.btn_pause_resume.setIcon(get_asset_icon("icon_play.png"))
             self.btn_pause_resume.setObjectName("btnResume")
         else:
-            self.btn_pause_resume.setText("⏸ Pause")
+            self.btn_pause_resume.setText(" Pause")
+            self.btn_pause_resume.setIcon(get_asset_icon("icon_pause.png"))
             self.btn_pause_resume.setObjectName("btnPause")
+        self.btn_pause_resume.setIconSize(QSize(18, 18))
         self.btn_pause_resume.setStyle(self.btn_pause_resume.style())
 
     @Slot()
