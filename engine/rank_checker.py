@@ -301,14 +301,7 @@ class RankCheckerThread(QThread):
                 context = self.launch_context(p, country_info, proxy_dict)
                 page = context.pages[0] if context.pages else context.new_page()
                 
-                # Fast route interceptor: block heavy image/font/media downloads on search pages
-                try:
-                    page.route("**/*", lambda route, request: (
-                        route.abort() if request.resource_type in ["image", "media", "font"] and "favicon" not in request.url
-                        else route.continue_()
-                    ))
-                except Exception:
-                    pass
+                # Fast & natural DOM loading without blocking CAPTCHA / reCAPTCHA security images
 
                 # Advanced Stealth script injection (Locale + WebGL + Permissions + Navigator)
                 loc = country_info.get("locale", "en-US")
