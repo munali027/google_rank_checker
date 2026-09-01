@@ -254,19 +254,30 @@ class CountrySelectDialog(QDialog):
 
 
 class MetricCard(QFrame):
-    def __init__(self, title: str, initial_value: str = "0", parent=None):
+    def __init__(self, title: str, initial_value: str = "0", icon_name: str = "", parent=None):
         super().__init__(parent)
         self.setObjectName("metricCard")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
         
+        title_layout = QHBoxLayout()
+        title_layout.setSpacing(6)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        
+        if icon_name:
+            self.lbl_icon = QLabel()
+            self.lbl_icon.setPixmap(get_asset_icon(icon_name).pixmap(18, 18))
+            title_layout.addWidget(self.lbl_icon)
+
         self.lbl_title = QLabel(title)
         self.lbl_title.setObjectName("metricTitle")
+        title_layout.addWidget(self.lbl_title)
+        title_layout.addStretch()
         
         self.lbl_value = QLabel(initial_value)
         self.lbl_value.setObjectName("metricValue")
         
-        layout.addWidget(self.lbl_title)
+        layout.addLayout(title_layout)
         layout.addWidget(self.lbl_value)
 
     def set_value(self, value: str):
@@ -491,7 +502,7 @@ class MainWindow(QMainWindow):
         metrics_layout.setSpacing(10)
         
         self.card_status = MetricCard("Status", "Idle")
-        self.card_time = MetricCard("⏱ Active Time", "00:00:00")
+        self.card_time = MetricCard("Active Time", "00:00:00", icon_name="icon_timer.png")
         self.card_current_kw = MetricCard("Current Keyword", "-")
         self.card_completed = MetricCard("Completed / Total", "0 / 0")
         self.card_found = MetricCard("Found Count", "0")
@@ -558,24 +569,26 @@ class MainWindow(QMainWindow):
         self.expected_sha256 = expected_sha256
 
         if has_update:
-            self.btn_update.setText(f" Update App 🔴 (v{latest_ver})")
+            self.btn_update.setText(f" Update Available (v{latest_ver})")
             self.btn_update.setIcon(get_asset_icon("icon_refresh.png"))
             self.btn_update.setIconSize(QSize(18, 18))
             self.btn_update.setStyleSheet("""
                 QPushButton {
-                    background-color: #F38BA8;
-                    color: #11111B;
-                    border: 1px solid #F38BA8;
+                    background-color: #1E1E2E;
+                    color: #89B4FA;
+                    border: 1.5px solid #89B4FA;
                     padding: 6px 14px;
                     border-radius: 6px;
                     font-weight: bold;
                 }
                 QPushButton:hover {
-                    background-color: #E78284;
+                    background-color: #313244;
+                    color: #B4BEFE;
+                    border-color: #B4BEFE;
                 }
             """)
-            self.btn_update.setToolTip(f"New Update v{latest_ver} available! Click to download & install.")
-            self.log_msg(f"[UPDATE] 🚀 New update v{latest_ver} is available! Click 'Update App 🔴' to install.")
+            self.btn_update.setToolTip(f"New Update v{latest_ver} available! Click to review & install.")
+            self.log_msg(f"[UPDATE] New update v{latest_ver} is available! Click 'Update Available' to install.")
 
     @Slot()
     def on_check_update_manual(self):

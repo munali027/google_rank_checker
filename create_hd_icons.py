@@ -18,11 +18,9 @@ def create_hd_icons():
     pix.fill(Qt.transparent)
     painter = QPainter(pix)
     painter.setRenderHint(QPainter.Antialiasing)
-    
     pen = QPen(QColor("#89B4FA"), 3.5)
     painter.setPen(pen)
     painter.drawEllipse(6, 6, 52, 52)
-    # Latitude & Longitude lines
     painter.drawLine(6, 32, 58, 32)
     painter.drawLine(32, 6, 32, 58)
     painter.drawEllipse(16, 6, 32, 52)
@@ -76,7 +74,6 @@ def create_hd_icons():
     pen = QPen(QColor("#89B4FA"), 4)
     painter.setPen(pen)
     painter.drawArc(QRectF(10, 10, 44, 44), 30 * 16, 300 * 16)
-    # Arrow head
     path = QPainterPath()
     path.moveTo(42, 6)
     path.lineTo(54, 16)
@@ -111,7 +108,6 @@ def create_hd_icons():
     pen = QPen(QColor("#A6E3A1"), 3.5)
     painter.setPen(pen)
     painter.drawRoundedRect(QRectF(12, 10, 40, 46), 4, 4)
-    # Down arrow inside
     painter.drawLine(32, 20, 32, 40)
     path = QPainterPath()
     path.moveTo(22, 32)
@@ -120,6 +116,28 @@ def create_hd_icons():
     painter.drawPath(path)
     painter.end()
     pix.save(os.path.join(assets_dir, "icon_export.png"))
+
+    # 8. Stopwatch / Timer HD Icon (Cyan Accent Clock Vector)
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor("#89B4FA"), 3.5)
+    painter.setPen(pen)
+    painter.drawEllipse(8, 12, 48, 48)
+    painter.setBrush(QColor("#89B4FA"))
+    painter.setPen(Qt.NoPen)
+    painter.drawRoundedRect(QRectF(25, 4, 14, 5), 2, 2)
+    # Clock hands
+    pen = QPen(QColor("#89B4FA"), 3.5, Qt.SolidLine, Qt.RoundCap)
+    painter.setPen(pen)
+    painter.drawLine(32, 36, 32, 22)
+    painter.drawLine(32, 36, 43, 36)
+    painter.setBrush(QColor("#89B4FA"))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(29, 33, 6, 6)
+    painter.end()
+    pix.save(os.path.join(assets_dir, "icon_timer.png"))
 
     print("HD Icons generated successfully in assets/ directory!")
 
