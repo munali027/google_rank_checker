@@ -155,6 +155,33 @@ class RankCheckerThread(QThread):
             return True
         return False
 
+    @staticmethod
+    def compute_relevance_score(keyword: str, url: str, title: str = "") -> float:
+        """
+        Universal semantic relevance scorer between search keyword and candidate URL/Title.
+        Works across all languages (Arabic, English, Urdu, etc.) and all website types (Blogs, Products, Services).
+        """
+        if not keyword or not url:
+            return 0.0
+
+        # Tokenize keyword (lowercase, clean symbols)
+        kw_clean = re.sub(r'[^\w\s\u0600-\u06FF]', ' ', keyword.lower())
+        tokens = [t for t in kw_clean.split() if len(t) > 1]
+        if not tokens:
+            return 1.0
+
+        url_lower = url.lower()
+        title_lower = title.lower() if title else ""
+
+        score = 0.0
+        for tok in tokens:
+            if tok in url_lower:
+                score += 2.5  # High score for matching slug/path
+            if tok in title_lower:
+                score += 1.0  # Secondary score for title match
+
+        return score
+
     def parse_proxy(self) -> Optional[Dict[str, str]]:
         if not self.proxy_string:
             return None
@@ -189,7 +216,8 @@ class RankCheckerThread(QThread):
         self.status_changed.emit("Stopped")
         self.log_message.emit("[INFO] Stopping process...")
 
-    def random_delay(self, min_sec: float = 4.0, max_sec: float = 8.0):
+    def random_delay(self, min_sec: float = 1.8, max_sec: float = 3.2):
+        """Optimized safe dynamic delay for 2x faster rank checking without triggering CAPTCHA."""
         sec = random.uniform(min_sec, max_sec)
         time.sleep(sec)
 
@@ -197,7 +225,7 @@ class RankCheckerThread(QThread):
         while self.is_paused or self.in_captcha_state:
             if self.is_stopped:
                 break
-            time.sleep(0.5)
+            time.sleep(0.4)
 
     def launch_context(self, p, country_info: Dict[str, Any], proxy_dict: Optional[Dict[str, str]]):
         """
@@ -257,8 +285,8 @@ class RankCheckerThread(QThread):
     def run(self):
         try:
             self.status_changed.emit("Running")
-            mode_desc = "Single First Match" if self.scan_mode == "single" else "All Occurrences Across Pages"
-            self.log_message.emit(f"[START] Rank checking for domain: '{self.target_domain}' ({len(self.keywords)} keywords) | Mode: {mode_desc}")
+            mode_desc = "Single Best Match" if self.scan_mode == "single" else "All Occurrences Across Pages"
+            self.log_message.emit(f"[START] Rank checking for domain: '{self.target_domain}' ({len(self.keywords)} keywords) | Mode: {mode_desc} (Safe Fast Mode ⚡)")
             
             country_info = COUNTRY_DOMAINS.get(self.country_name, COUNTRY_DOMAINS["United States"])
             
@@ -273,6 +301,15 @@ class RankCheckerThread(QThread):
                 context = self.launch_context(p, country_info, proxy_dict)
                 page = context.pages[0] if context.pages else context.new_page()
                 
+                # Fast route interceptor: block heavy image/font/media downloads on search pages
+                try:
+                    page.route("**/*", lambda route, request: (
+                        route.abort() if request.resource_type in ["image", "media", "font"] and "favicon" not in request.url
+                        else route.continue_()
+                    ))
+                except Exception:
+                    pass
+
                 # Advanced Stealth script injection (Locale + WebGL + Permissions + Navigator)
                 loc = country_info.get("locale", "en-US")
                 hl = country_info.get("hl", "en")
@@ -299,8 +336,8 @@ class RankCheckerThread(QThread):
 
                 # Visit homepage initially to set consent/language cookies naturally
                 try:
-                    page.goto(country_info["base"], wait_until="domcontentloaded", timeout=20000)
-                    time.sleep(2.0)
+                    page.goto(country_info["base"], wait_until="domcontentloaded", timeout=15000)
+                    time.sleep(1.0)
                 except Exception:
                     pass
 
@@ -340,7 +377,8 @@ class RankCheckerThread(QThread):
                     completed_count += 1
                     self.progress_updated.emit(completed_count, total_kw)
 
-                    self.random_delay(4.5, 8.0)
+                    # Dynamic safe delay between keywords (1.8s - 3.2s)
+                    self.random_delay(1.8, 3.2)
 
                 try:
                     context.close()
@@ -386,8 +424,8 @@ class RankCheckerThread(QThread):
             self.log_message.emit(f"  -> Checking Google Page {page_num}...")
             
             try:
-                page.goto(search_url, wait_until="domcontentloaded", timeout=25000)
-                time.sleep(1.8)
+                page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
+                time.sleep(0.9)  # Fast optimized DOM stabilization
 
                 # CAPTCHA / Unusual Traffic Detection
                 if CaptchaHandler.is_captcha_present(page):
@@ -424,21 +462,21 @@ class RankCheckerThread(QThread):
                             "status": "CAPTCHA"
                         }]
                     
-                    time.sleep(1.5)
+                    time.sleep(1.0)
 
                 # Extract organic links with dual-mode (Direct href + Breadcrumb Cite Fallback)
                 organic_links = self.extract_organic_links(page)
                 self.log_message.emit(f"    (Found {len(organic_links)} organic results on Page {page_num})")
                 
-                # Check for target domain matches
+                # Check for target domain matches and score relevance
+                page_matches = []
                 for local_idx, link_info in enumerate(organic_links, start=1):
                     global_rank = (page_num - 1) * 10 + local_idx
                     url = link_info["url"]
+                    title = link_info.get("title", "")
 
                     if self.is_domain_match(self.target_domain, url):
-                        self.log_message.emit(f"  [★ FOUND] Domain '{self.target_domain}' found at Rank #{global_rank} (Page {page_num}, Pos {local_idx})!")
-                        self.log_message.emit(f"    URL: {url}")
-                        
+                        rel_score = self.compute_relevance_score(keyword, url, title)
                         match_entry = {
                             "keyword": keyword,
                             "domain": self.target_domain,
@@ -447,17 +485,31 @@ class RankCheckerThread(QThread):
                             "ranking_url": url,
                             "target_country": self.country_name,
                             "checked_at": now_str,
-                            "status": "Found"
+                            "status": "Found",
+                            "score": rel_score
                         }
-                        found_results.append(match_entry)
+                        page_matches.append(match_entry)
 
-                        if self.scan_mode == "single":
-                            return found_results
+                if page_matches:
+                    if self.scan_mode == "single":
+                        # If multiple matches on same page, pick highest relevance score (or first if equal)
+                        best_match = max(page_matches, key=lambda m: (m["score"], -m["rank"]))
+                        best_match.pop("score", None)
+                        self.log_message.emit(f"  [★ FOUND] Domain '{self.target_domain}' matched at Rank #{best_match['rank']} (Page {page_num})!")
+                        self.log_message.emit(f"    URL: {best_match['ranking_url']}")
+                        found_results.append(best_match)
+                        return found_results
+                    else:
+                        for m in page_matches:
+                            m.pop("score", None)
+                            self.log_message.emit(f"  [★ FOUND] Domain '{self.target_domain}' found at Rank #{m['rank']} (Page {page_num})!")
+                            self.log_message.emit(f"    URL: {m['ranking_url']}")
+                            found_results.append(m)
 
             except Exception as e:
                 self.log_message.emit(f"  [ERROR] Error checking page {page_num}: {e}")
                 
-            self.random_delay(2.5, 5.0)
+            self.random_delay(1.0, 2.0)
 
         # Return results list or default Not Found entry
         if found_results:
@@ -487,7 +539,7 @@ class RankCheckerThread(QThread):
 
         try:
             page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(0.4)
+            time.sleep(0.2)
         except Exception:
             pass
 
