@@ -1,4 +1,5 @@
 import os
+import subprocess
 from typing import List, Dict, Any, Optional
 
 from PySide6.QtWidgets import (
@@ -6,7 +7,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QComboBox, QPushButton, QFileDialog,
     QProgressBar, QTableWidget, QTableWidgetItem, QHeaderView,
     QTextEdit, QGroupBox, QMessageBox, QFrame, QDialog, QListWidget,
-    QListWidgetItem, QRadioButton, QButtonGroup, QCheckBox
+    QListWidgetItem, QRadioButton, QButtonGroup, QCheckBox, QApplication
 )
 from PySide6.QtCore import Qt, Slot, QThread, Signal, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon
@@ -34,13 +35,13 @@ class UpdateCheckThread(QThread):
 
 class UpdateDialog(QDialog):
     """
-    Dialog displaying Update Details, Live Download Progress Bar & Asynchronous Download Thread.
-    Keeps UI 100% responsive without showing '(Not Responding)'.
+    Dialog displaying Update Details, Live Download & Installation Progress Bars.
+    Handles seamless update extraction and auto-restart without creating duplicate windows.
     """
     def __init__(self, current_ver: str, latest_ver: str, notes: str, download_url: str, expected_sha256: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"App Update Available - v{latest_ver}")
-        self.resize(500, 380)
+        self.resize(520, 400)
         self.setStyleSheet(DARK_THEME_QSS)
 
         self.download_url = download_url
@@ -71,16 +72,16 @@ class UpdateDialog(QDialog):
         txt_notes.setStyleSheet("background-color: #181825; border: 1px solid #313244; color: #CDD6F4;")
         layout.addWidget(txt_notes)
 
-        # Live Download Progress Bar & Status Text
+        # Live Progress Status & Progress Bar
         self.lbl_progress_status = QLabel("")
         self.lbl_progress_status.setStyleSheet("color: #89B4FA; font-weight: bold;")
         self.lbl_progress_status.setVisible(False)
         layout.addWidget(self.lbl_progress_status)
 
-        self.dl_progress_bar = QProgressBar()
-        self.dl_progress_bar.setValue(0)
-        self.dl_progress_bar.setVisible(False)
-        layout.addWidget(self.dl_progress_bar)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -106,32 +107,57 @@ class UpdateDialog(QDialog):
         self.btn_install.setEnabled(False)
         self.btn_close.setEnabled(False)
         self.lbl_progress_status.setVisible(True)
-        self.dl_progress_bar.setVisible(True)
+        self.progress_bar.setVisible(True)
         self.lbl_progress_status.setText("Initializing update package download...")
 
         self.dl_thread = UpdateDownloadThread(self.download_url, self.expected_sha256)
-        self.dl_thread.progress_updated.connect(self.on_download_progress)
-        self.dl_thread.download_finished.connect(self.on_download_finished)
+        self.dl_thread.download_progress.connect(self.on_download_progress)
+        self.dl_thread.install_progress.connect(self.on_install_progress)
+        self.dl_thread.status_message.connect(self.on_status_message)
+        self.dl_thread.update_ready.connect(self.on_update_ready)
+        self.dl_thread.update_failed.connect(self.on_update_failed)
         self.dl_thread.start()
 
     @Slot(int, int, str, int)
     def on_download_progress(self, downloaded: int, total: int, speed_str: str, percent: int):
-        self.dl_progress_bar.setValue(percent)
+        self.progress_bar.setValue(percent)
         dl_mb = downloaded / (1024 * 1024)
         tot_mb = total / (1024 * 1024)
         if total > 0:
-            self.lbl_progress_status.setText(f"Downloading Update: {dl_mb:.1f} MB / {tot_mb:.1f} MB ({percent}%) @ {speed_str}")
+            self.lbl_progress_status.setText(f"📥 Downloading: {dl_mb:.1f} MB / {tot_mb:.1f} MB ({percent}%) @ {speed_str}")
         else:
-            self.lbl_progress_status.setText(f"Downloading Update: {dl_mb:.1f} MB @ {speed_str}")
+            self.lbl_progress_status.setText(f"📥 Downloading: {dl_mb:.1f} MB @ {speed_str}")
 
-    @Slot(bool, str)
-    def on_download_finished(self, success: bool, msg: str):
-        if not success:
-            QMessageBox.critical(self, "Update Status", msg)
-            self.btn_install.setEnabled(True)
-            self.btn_close.setEnabled(True)
-            self.lbl_progress_status.setVisible(False)
-            self.dl_progress_bar.setVisible(False)
+    @Slot(int, int, str, int)
+    def on_install_progress(self, extracted: int, total: int, fname: str, percent: int):
+        self.progress_bar.setValue(percent)
+        self.lbl_progress_status.setText(f"⚙️ Installing: Extracting files ({extracted}/{total}) - {fname}")
+
+    @Slot(str)
+    def on_status_message(self, msg: str):
+        self.lbl_progress_status.setText(msg)
+
+    @Slot(str, str)
+    def on_update_ready(self, bat_path: str, target_exe: str):
+        self.lbl_progress_status.setText("🚀 Launching updated version...")
+        self.progress_bar.setValue(100)
+        
+        # Launch updater batch and terminate current instance cleanly
+        try:
+            subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
+        except Exception:
+            pass
+        
+        QApplication.quit()
+        os._exit(0)
+
+    @Slot(str)
+    def on_update_failed(self, msg: str):
+        QMessageBox.critical(self, "Update Status", msg)
+        self.btn_install.setEnabled(True)
+        self.btn_close.setEnabled(True)
+        self.lbl_progress_status.setVisible(False)
+        self.progress_bar.setVisible(False)
 
 
 class CountrySelectDialog(QDialog):

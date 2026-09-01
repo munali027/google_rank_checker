@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import time
+import shutil
 import urllib.request
 import subprocess
 import hashlib
@@ -15,11 +16,14 @@ VERSION_CHECK_URL = "https://raw.githubusercontent.com/ma-bakhtawer/google_rank_
 
 class UpdateDownloadThread(QThread):
     """
-    Asynchronous Thread for Downloading Update ZIP with live progress & speed calculations.
-    Keeps Qt GUI 100% responsive without showing '(Not Responding)'.
+    Asynchronous Thread for Downloading, Verifying & Extracting Update Packages with live progress.
+    Keeps Qt GUI 100% responsive and handles both flat and wrapped ZIP distributions.
     """
-    progress_updated = Signal(int, int, str, int)  # (downloaded_bytes, total_bytes, speed_str, percent)
-    download_finished = Signal(bool, str)          # (success, message)
+    download_progress = Signal(int, int, str, int)  # (downloaded_bytes, total_bytes, speed_str, percent)
+    install_progress = Signal(int, int, str, int)   # (extracted_files, total_files, file_name, percent)
+    status_message = Signal(str)
+    update_ready = Signal(str, str)                 # (bat_path, target_exe_path)
+    update_failed = Signal(str)                     # error_message
 
     def __init__(self, download_url: str, expected_sha256: str = ""):
         super().__init__()
@@ -28,14 +32,23 @@ class UpdateDownloadThread(QThread):
 
     def run(self):
         update_dir = os.path.abspath(os.path.join("data", "updates"))
-        os.makedirs(update_dir, exist_ok=True)
+        staging_dir = os.path.join(update_dir, "staging")
         zip_path = os.path.join(update_dir, "update.zip")
 
-        # 1. Chunked HTTP Download with live progress calculation
+        os.makedirs(update_dir, exist_ok=True)
+        if os.path.exists(staging_dir):
+            try:
+                shutil.rmtree(staging_dir)
+            except Exception:
+                pass
+        os.makedirs(staging_dir, exist_ok=True)
+
+        # ---------------- Phase 1: Download Update Package ----------------
+        self.status_message.emit("Connecting to update server...")
         try:
             req = urllib.request.Request(
                 self.download_url,
-                headers={'User-Agent': 'GoogleRankChecker-AutoUpdater/1.4'}
+                headers={'User-Agent': f'GoogleRankChecker-AutoUpdater/{APP_VERSION}'}
             )
             with urllib.request.urlopen(req, timeout=30) as response:
                 total_size = int(response.headers.get('Content-Length', 0))
@@ -55,56 +68,92 @@ class UpdateDownloadThread(QThread):
                         speed_mbps = (downloaded / (1024 * 1024)) / elapsed if elapsed > 0 else 0.0
                         pct = int((downloaded / total_size) * 100) if total_size > 0 else 0
                         
-                        self.progress_updated.emit(downloaded, total_size, f"{speed_mbps:.1f} MB/s", pct)
+                        self.download_progress.emit(downloaded, total_size, f"{speed_mbps:.1f} MB/s", pct)
 
-        except Exception:
-            self.download_finished.emit(False, "Update could not be downloaded. Please check your internet connection and try again.")
+        except Exception as e:
+            self.update_failed.emit(f"Update could not be downloaded ({e}). Please check your internet connection and try again.")
             return
 
-        # 2. Verify ZIP Integrity
+        # ---------------- Phase 2: Verify ZIP Integrity & Checksum ----------------
+        self.status_message.emit("Verifying package integrity...")
         if not os.path.exists(zip_path) or os.path.getsize(zip_path) < 100:
-            self.download_finished.emit(False, "Update could not be downloaded. Please check your internet connection and try again.")
+            self.update_failed.emit("Update package is empty or invalid. Please try downloading again.")
             return
 
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 if zip_ref.testzip() is not None:
-                    self.download_finished.emit(False, "Update failed. Your current version has not been changed.")
+                    self.update_failed.emit("Update package is corrupted. Your current version has not been changed.")
                     return
         except Exception:
-            self.download_finished.emit(False, "Update failed. Your current version has not been changed.")
+            self.update_failed.emit("Failed to open update archive. Your current version has not been changed.")
             return
 
-        # 3. SHA-256 Checksum Verification
         if self.expected_sha256:
             actual_sha256 = AutoUpdater.compute_sha256(zip_path)
             if actual_sha256 != self.expected_sha256:
-                self.download_finished.emit(False, "Update package verification failed (SHA-256 mismatch). Please try downloading again.")
+                self.update_failed.emit("Update verification failed (SHA-256 mismatch). Your current version has not been changed.")
                 return
 
-        # 4. Create Batch Script & Launch Restart
+        # ---------------- Phase 3: Extract with Live Progress Bar ----------------
+        self.status_message.emit("Extracting update files...")
         try:
-            app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-            bat_path = os.path.join(update_dir, "run_update.bat")
-            exe_path = os.path.join(app_dir, "GoogleRankChecker.exe")
-            
-            bat_script = f"""@echo off
-timeout /t 2 /nobreak > nul
-powershell -Command "Expand-Archive -Path '{zip_path}' -DestinationPath '{app_dir}' -Force"
-if exist "{exe_path}" (
-    start "" "{exe_path}"
-)
-del "{zip_path}"
-del "%~f0"
-"""
-            with open(bat_path, "w", encoding="utf-8") as f:
-                f.write(bat_script)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                file_list = zip_ref.infolist()
+                total_files = len(file_list)
                 
-            subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
-            self.download_finished.emit(True, "Update applied successfully! Restarting application...")
-            sys.exit(0)
-        except Exception:
-            self.download_finished.emit(False, "Update failed. Your current version has not been changed.")
+                for idx, file_info in enumerate(file_list, start=1):
+                    zip_ref.extract(file_info, staging_dir)
+                    pct = int((idx / total_files) * 100)
+                    fname = os.path.basename(file_info.filename)
+                    if fname:
+                        self.install_progress.emit(idx, total_files, fname, pct)
+
+        except Exception as e:
+            self.update_failed.emit(f"Extraction failed ({e}). Your current version has not been changed.")
+            return
+
+        # ---------------- Phase 4: Normalize Folder Structure ----------------
+        # If the ZIP contained a wrapped root folder (e.g. GoogleRankChecker/GoogleRankChecker.exe), flatten it
+        final_source_dir = staging_dir
+        sub_items = [os.path.join(staging_dir, x) for x in os.listdir(staging_dir)]
+        if len(sub_items) == 1 and os.path.isdir(sub_items[0]):
+            nested_exe = os.path.join(sub_items[0], "GoogleRankChecker.exe")
+            if os.path.exists(nested_exe):
+                final_source_dir = sub_items[0]
+
+        # Determine target application directory
+        app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        target_exe = os.path.join(app_dir, "GoogleRankChecker.exe")
+
+        # ---------------- Phase 5: Generate Robust Windows Updater Batch ----------------
+        bat_path = os.path.join(update_dir, "apply_update.bat")
+        bat_content = f"""@echo off
+title Google Rank Checker - Updating to v{APP_VERSION}
+echo Waiting for application to close...
+taskkill /F /IM GoogleRankChecker.exe /T >nul 2>&1
+timeout /t 1 /nobreak >nul
+
+echo Copying update files to {app_dir}...
+robocopy "{final_source_dir}" "{app_dir}" /E /IS /IT /NP /R:5 /W:1 >nul
+
+echo Launching updated application...
+start "" "{target_exe}"
+
+timeout /t 1 /nobreak >nul
+del "{zip_path}" >nul 2>&1
+rmdir /S /Q "{staging_dir}" >nul 2>&1
+(goto) 2>nul & del "%~f0"
+"""
+        try:
+            with open(bat_path, "w", encoding="utf-8") as f:
+                f.write(bat_content)
+        except Exception as e:
+            self.update_failed.emit(f"Failed to create update script ({e}).")
+            return
+
+        self.status_message.emit("Update ready! Restarting application...")
+        self.update_ready.emit(bat_path, target_exe)
 
 
 class AutoUpdater:
@@ -132,7 +181,7 @@ class AutoUpdater:
         try:
             req = urllib.request.Request(
                 remote_url,
-                headers={'User-Agent': 'GoogleRankChecker-AutoUpdater/1.4'}
+                headers={'User-Agent': f'GoogleRankChecker-AutoUpdater/{APP_VERSION}'}
             )
             with urllib.request.urlopen(req, timeout=6) as response:
                 if response.status == 200:
