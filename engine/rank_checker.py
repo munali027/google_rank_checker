@@ -5,6 +5,8 @@ import sys
 import io
 import os
 import urllib.parse
+import urllib.request
+import urllib.error
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -77,7 +79,7 @@ COUNTRY_DOMAINS = {
     "Hungary": {"base": "https://www.google.hu", "gl": "hu", "hl": "hu", "tz": "Europe/Budapest", "locale": "hu-HU"},
     "South Korea": {"base": "https://www.google.co.kr", "gl": "kr", "hl": "ko", "tz": "Asia/Seoul", "locale": "ko-KR"},
     "Hong Kong": {"base": "https://www.google.com.hk", "gl": "hk", "hl": "zh-TW", "tz": "Asia/Hong_Kong", "locale": "zh-HK"},
-    "Taiwan": {"base": "https://www.google.com.tw", "gl": "tw", "hl": "zh-TW", "tz": "Asia/Taipei", "locale": "zh-TW"},
+    "Taiwan": {"base": "https://www.google.tw", "gl": "tw", "hl": "zh-TW", "tz": "Asia/Taipei", "locale": "zh-TW"},
     "Israel": {"base": "https://www.google.co.il", "gl": "il", "hl": "iw", "tz": "Asia/Jerusalem", "locale": "he-IL"},
     "Morocco": {"base": "https://www.google.co.ma", "gl": "ma", "hl": "ar", "tz": "Africa/Casablanca", "locale": "ar-MA"},
     "Algeria": {"base": "https://www.google.dz", "gl": "dz", "hl": "ar", "tz": "Africa/Algiers", "locale": "ar-DZ"},
@@ -156,15 +158,47 @@ class RankCheckerThread(QThread):
         return False
 
     @staticmethod
+    def resolve_redirect_url(url: str) -> str:
+        """
+        Fast non-blocking redirect resolver for TARGET DOMAIN only.
+        Timeout is capped at 0.8s so it never causes freezes.
+        """
+        if not url or not (url.startswith("http://") or url.startswith("https://")):
+            return url
+
+        parsed = urllib.parse.urlparse(url)
+        if not any(g in parsed.netloc.lower() for g in ["google.com", "google.ae", "google.co", "google."]):
+            return url
+
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
+            )
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):
+                    return None
+
+            opener = urllib.request.build_opener(NoRedirect)
+            try:
+                resp = opener.open(req, timeout=0.8)
+                return resp.geturl()
+            except urllib.error.HTTPError as e:
+                if 'Location' in e.headers:
+                    return e.headers['Location']
+        except Exception:
+            pass
+
+        return url
+
+    @staticmethod
     def compute_relevance_score(keyword: str, url: str, title: str = "") -> float:
         """
         Universal semantic relevance scorer between search keyword and candidate URL/Title.
-        Works across all languages (Arabic, English, Urdu, etc.) and all website types (Blogs, Products, Services).
         """
         if not keyword or not url:
             return 0.0
 
-        # Tokenize keyword (lowercase, clean symbols)
         kw_clean = re.sub(r'[^\w\s\u0600-\u06FF]', ' ', keyword.lower())
         tokens = [t for t in kw_clean.split() if len(t) > 1]
         if not tokens:
@@ -176,9 +210,9 @@ class RankCheckerThread(QThread):
         score = 0.0
         for tok in tokens:
             if tok in url_lower:
-                score += 2.5  # High score for matching slug/path
+                score += 2.5
             if tok in title_lower:
-                score += 1.0  # Secondary score for title match
+                score += 1.0
 
         return score
 
@@ -216,8 +250,8 @@ class RankCheckerThread(QThread):
         self.status_changed.emit("Stopped")
         self.log_message.emit("[INFO] Stopping process...")
 
-    def random_delay(self, min_sec: float = 1.8, max_sec: float = 3.2):
-        """Optimized safe dynamic delay for 2x faster rank checking without triggering CAPTCHA."""
+    def random_delay(self, min_sec: float = 1.0, max_sec: float = 2.0):
+        """Ultra-fast safe dynamic delay."""
         sec = random.uniform(min_sec, max_sec)
         time.sleep(sec)
 
@@ -225,12 +259,11 @@ class RankCheckerThread(QThread):
         while self.is_paused or self.in_captcha_state:
             if self.is_stopped:
                 break
-            time.sleep(0.4)
+            time.sleep(0.3)
 
     def launch_context(self, p, country_info: Dict[str, Any], proxy_dict: Optional[Dict[str, str]]):
         """
         Launches real Chrome/Edge persistent context cleanly.
-        Sets browser locale, language headers, and preferences per selected country.
         """
         user_data_dir = os.path.abspath(os.path.join("data", "browser_profile"))
         os.makedirs(user_data_dir, exist_ok=True)
@@ -242,8 +275,18 @@ class RankCheckerThread(QThread):
             "--no-first-run",
             "--no-service-autorun"
         ]
+
+        ext_path = os.path.normpath(os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "extensions", "remove_breadcrumbs")))
+        if not os.path.exists(ext_path):
+            ext_path = os.path.normpath(os.path.abspath(os.path.join("assets", "extensions", "remove_breadcrumbs")))
+
+        if os.path.exists(ext_path):
+            base_args.extend([
+                f"--disable-extensions-except={ext_path}",
+                f"--load-extension={ext_path}"
+            ])
+
         user_agent = random.choice(USER_AGENTS)
-        
         locale = country_info.get("locale", "en-US")
         hl = country_info.get("hl", "en")
 
@@ -260,34 +303,30 @@ class RankCheckerThread(QThread):
             }
         }
 
-        # Apply Timezone Override ONLY if explicitly enabled by user
         if self.override_timezone:
             context_kwargs["timezone_id"] = country_info.get("tz", "America/New_York")
 
         if proxy_dict:
             context_kwargs["proxy"] = proxy_dict
 
-        # 1. Try real system Google Chrome
         try:
             return p.chromium.launch_persistent_context(**context_kwargs, channel="chrome")
         except Exception:
             pass
 
-        # 2. Try real system Microsoft Edge
         try:
             return p.chromium.launch_persistent_context(**context_kwargs, channel="msedge")
         except Exception:
             pass
 
-        # 3. Fallback to default Playwright Chromium
         return p.chromium.launch_persistent_context(**context_kwargs)
 
     def run(self):
         try:
             self.status_changed.emit("Running")
             mode_desc = "Single Best Match" if self.scan_mode == "single" else "All Occurrences Across Pages"
-            self.log_message.emit(f"[START] Rank checking for domain: '{self.target_domain}' ({len(self.keywords)} keywords) | Mode: {mode_desc} (Safe Fast Mode ⚡)")
-            
+            self.log_message.emit(f"[START] Rank checking for domain: '{self.target_domain}' ({len(self.keywords)} keywords) | Mode: {mode_desc} (Ultra-Fast ⚡)")
+
             country_info = COUNTRY_DOMAINS.get(self.country_name, COUNTRY_DOMAINS["United States"])
             
             tz_status = f"Enabled ({country_info['tz']})" if self.override_timezone else "Disabled (Natural)"
@@ -300,10 +339,7 @@ class RankCheckerThread(QThread):
             with sync_playwright() as p:
                 context = self.launch_context(p, country_info, proxy_dict)
                 page = context.pages[0] if context.pages else context.new_page()
-                
-                # Fast & natural DOM loading without blocking CAPTCHA / reCAPTCHA security images
 
-                # Advanced Stealth script injection (Locale + WebGL + Permissions + Navigator)
                 loc = country_info.get("locale", "en-US")
                 hl = country_info.get("hl", "en")
 
@@ -327,10 +363,9 @@ class RankCheckerThread(QThread):
                     }};
                 """)
 
-                # Visit homepage initially to set consent/language cookies naturally
                 try:
                     page.goto(country_info["base"], wait_until="domcontentloaded", timeout=15000)
-                    time.sleep(1.0)
+                    time.sleep(0.5)
                 except Exception:
                     pass
 
@@ -362,7 +397,6 @@ class RankCheckerThread(QThread):
                     if self.is_stopped:
                         break
 
-                    # Record results list in state manager by keyword string
                     self.state_manager.record_result(keyword, results)
                     for r in results:
                         self.keyword_completed.emit(r)
@@ -370,8 +404,7 @@ class RankCheckerThread(QThread):
                     completed_count += 1
                     self.progress_updated.emit(completed_count, total_kw)
 
-                    # Dynamic safe delay between keywords (1.8s - 3.2s)
-                    self.random_delay(1.8, 3.2)
+                    self.random_delay(1.2, 2.2)
 
                 try:
                     context.close()
@@ -417,10 +450,9 @@ class RankCheckerThread(QThread):
             self.log_message.emit(f"  -> Checking Google Page {page_num}...")
             
             try:
-                page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
-                time.sleep(0.9)  # Fast optimized DOM stabilization
+                page.goto(search_url, wait_until="domcontentloaded", timeout=18000)
+                time.sleep(0.5)
 
-                # CAPTCHA / Unusual Traffic Detection
                 if CaptchaHandler.is_captcha_present(page):
                     self.log_message.emit(f"  [!] CAPTCHA / Rate limit detected on page {page_num}.")
                     self.captcha_detected.emit(f"CAPTCHA encountered for '{keyword}' on page {page_num}.")
@@ -455,13 +487,12 @@ class RankCheckerThread(QThread):
                             "status": "CAPTCHA"
                         }]
                     
-                    time.sleep(1.0)
+                    time.sleep(0.8)
 
-                # Extract organic links with dual-mode (Direct href + Breadcrumb Cite Fallback)
+                # Instant extraction with 0 delay for non-target links
                 organic_links = self.extract_organic_links(page)
                 self.log_message.emit(f"    (Found {len(organic_links)} organic results on Page {page_num})")
                 
-                # Check for target domain matches and score relevance
                 page_matches = []
                 for local_idx, link_info in enumerate(organic_links, start=1):
                     global_rank = (page_num - 1) * 10 + local_idx
@@ -485,7 +516,6 @@ class RankCheckerThread(QThread):
 
                 if page_matches:
                     if self.scan_mode == "single":
-                        # If multiple matches on same page, pick highest relevance score (or first if equal)
                         best_match = max(page_matches, key=lambda m: (m["score"], -m["rank"]))
                         best_match.pop("score", None)
                         self.log_message.emit(f"  [★ FOUND] Domain '{self.target_domain}' matched at Rank #{best_match['rank']} (Page {page_num})!")
@@ -502,9 +532,8 @@ class RankCheckerThread(QThread):
             except Exception as e:
                 self.log_message.emit(f"  [ERROR] Error checking page {page_num}: {e}")
                 
-            self.random_delay(1.0, 2.0)
+            self.random_delay(0.6, 1.2)
 
-        # Return results list or default Not Found entry
         if found_results:
             return found_results
         
@@ -522,17 +551,16 @@ class RankCheckerThread(QThread):
 
     def extract_organic_links(self, page: Page) -> List[Dict[str, str]]:
         """
-        Extracts top organic search result links from Google SERP.
-        Dual Extraction Engine:
-        1. Unwraps Google direct redirect URLs (/url?q=..., /goto?url=...).
-        2. Fallback to DOM Breadcrumb (<cite> text) parser if Google masks href with encrypted /goto?url= Base64 tracking links.
+        Instant 0ms-Delay Organic Link Extractor:
+        Extracts all organic results instantly in JavaScript.
+        Only resolves 302 redirects for items matching self.target_domain!
         """
         results = []
         seen_urls = set()
 
         try:
             page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(0.2)
+            time.sleep(0.1)
         except Exception:
             pass
 
@@ -555,7 +583,6 @@ class RankCheckerThread(QThread):
                     containers.forEach(container => {
                         if (seenContainers.has(container)) return;
                         
-                        // Skip ads / sponsored blocks
                         let adParent = container.closest('div[data-text-ad], .uEvd2e, [aria-label*="Sponsored"], [aria-label*="Ads"], .vdL23');
                         if (adParent) return;
                         
@@ -572,6 +599,16 @@ class RankCheckerThread(QThread):
                         let href = mainAnchor ? (mainAnchor.getAttribute('href') || mainAnchor.href || '') : '';
                         let dataUrl = mainAnchor ? (mainAnchor.getAttribute('data-url') || mainAnchor.getAttribute('data-href') || mainAnchor.getAttribute('data-rw') || '') : '';
                         
+                        let directChildUrl = '';
+                        const otherAnchors = container.querySelectorAll('a');
+                        for (let oa of otherAnchors) {
+                            let raw = oa.href || oa.getAttribute('href') || '';
+                            if (raw && (raw.startsWith('http://') || raw.startsWith('https://')) && !raw.includes('google.')) {
+                                directChildUrl = raw;
+                                break;
+                            }
+                        }
+
                         const citeEl = container.querySelector('cite') || 
                                        container.querySelector('div.TbwUpd') || 
                                        container.querySelector('span.cite') || 
@@ -594,8 +631,10 @@ class RankCheckerThread(QThread):
                         results.push({
                             href: href,
                             dataUrl: dataUrl,
+                            directChildUrl: directChildUrl,
                             citeText: citeText,
-                            title: title
+                            title: title,
+                            containerText: text.toLowerCase()
                         });
                     });
                     
@@ -606,33 +645,54 @@ class RankCheckerThread(QThread):
             for item in raw_links:
                 href = item.get("href", "").strip()
                 data_url = item.get("dataUrl", "").strip()
+                direct_child = item.get("directChildUrl", "").strip()
                 cite_text = item.get("citeText", "").strip()
                 title = item.get("title", "").strip()
+                container_text = item.get("containerText", "")
 
                 candidate_url = ""
 
-                # 1. Direct href / dataUrl unwrapping
-                target_from_link = data_url if (data_url and data_url.startswith("http")) else href
+                # 1. Direct child URL (0ms)
+                if direct_child:
+                    candidate_url = direct_child
 
-                if "/url?" in target_from_link or "/goto?" in target_from_link:
-                    try:
-                        parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(target_from_link).query)
-                        for p_name in ["q", "url", "u"]:
-                            if p_name in parsed_qs and parsed_qs[p_name]:
-                                val = parsed_qs[p_name][0]
-                                if val.startswith("http://") or val.startswith("https://"):
-                                    candidate_url = val
-                                    break
-                    except Exception:
-                        pass
+                # 2. Check direct links
+                if not candidate_url:
+                    target_from_link = data_url if (data_url and data_url.startswith("http")) else href
 
-                if not candidate_url and (target_from_link.startswith("http://") or target_from_link.startswith("https://")):
-                    parsed_domain = urllib.parse.urlparse(target_from_link).netloc.lower()
-                    is_google = any(g_dom in parsed_domain for g_dom in ["google.com", "google.co", "googleusercontent.com", "gstatic.com", "youtube.com", "schema.org"])
-                    if not is_google:
-                        candidate_url = target_from_link
+                    if "/url?" in target_from_link or "/goto?" in target_from_link:
+                        # Plain query param check (0ms)
+                        try:
+                            parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(target_from_link).query)
+                            for p_name in ["q", "url", "u"]:
+                                if p_name in parsed_qs and parsed_qs[p_name]:
+                                    val = parsed_qs[p_name][0]
+                                    if val.startswith("http://") or val.startswith("https://"):
+                                        candidate_url = val
+                                        break
+                        except Exception:
+                            pass
 
-                # 2. Breadcrumb / Cite Text Fallback Parser if link is encrypted /goto?url= Base64 tracking link
+                        # ONLY resolve 302 redirect for our specific target domain (0ms for all other domains!)
+                        if not candidate_url:
+                            is_our_target = (self.target_domain in container_text or 
+                                             self.target_domain in cite_text.lower() or 
+                                             self.target_domain in target_from_link.lower())
+
+                            if is_our_target:
+                                if target_from_link.startswith("/"):
+                                    target_from_link = "https://www.google.com" + target_from_link
+                                resolved = self.resolve_redirect_url(target_from_link)
+                                if resolved and not any(g in urllib.parse.urlparse(resolved).netloc.lower() for g in ["google.com", "google.ae", "google.co", "google."]):
+                                    candidate_url = resolved
+
+                    elif target_from_link.startswith("http://") or target_from_link.startswith("https://"):
+                        parsed_domain = urllib.parse.urlparse(target_from_link).netloc.lower()
+                        is_google = any(g_dom in parsed_domain for g_dom in ["google.com", "google.co", "googleusercontent.com", "gstatic.com", "youtube.com", "schema.org"])
+                        if not is_google:
+                            candidate_url = target_from_link
+
+                # 3. Breadcrumb / Cite fallback (0ms)
                 if not candidate_url and cite_text:
                     url_match = re.search(r'(https?://[^\s>›]+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}[^\s>›]*)', cite_text)
                     if url_match:
