@@ -426,7 +426,7 @@ class RankCheckerThread(QThread):
                     
                     time.sleep(1.5)
 
-                # Extract organic links
+                # Extract organic links with dual-mode (Direct href + Breadcrumb Cite Fallback)
                 organic_links = self.extract_organic_links(page)
                 self.log_message.emit(f"    (Found {len(organic_links)} organic results on Page {page_num})")
                 
@@ -478,7 +478,9 @@ class RankCheckerThread(QThread):
     def extract_organic_links(self, page: Page) -> List[Dict[str, str]]:
         """
         Extracts top organic search result links from Google SERP.
-        Unwraps Google redirect URLs (/url?q=...) and filters out Google internal links.
+        Dual Extraction Engine:
+        1. Unwraps Google direct redirect URLs (/url?q=..., /goto?url=...).
+        2. Fallback to DOM Breadcrumb (<cite> text) parser if Google masks href with encrypted /goto?url= Base64 tracking links.
         """
         results = []
         seen_urls = set()
@@ -490,71 +492,121 @@ class RankCheckerThread(QThread):
             pass
 
         try:
-            # Use JS to extract all raw hrefs from organic result blocks
             raw_links = page.evaluate("""
                 () => {
-                    const links = [];
+                    const results = [];
+                    const seenContainers = new Set();
+                    
                     const selectors = [
-                        '#rso a:has(h3)',
-                        '#search a:has(h3)',
-                        'div.MjjYud a:has(h3)',
-                        'div.yuRUbf > a',
-                        'a[jsname="UWckNb"]',
-                        '#search div.g a[href^="http"]',
-                        '#search div.g a[href^="/url"]'
+                        '#rso div.MjjYud',
+                        '#rso div.g',
+                        '#search div.g',
+                        'div.yuRUbf',
+                        '#rso > div'
                     ];
                     
-                    const elements = document.querySelectorAll(selectors.join(', '));
-                    elements.forEach(el => {
-                        // Skip ads / sponsored elements
-                        let parent = el.closest('div[data-text-ad], .uEvd2e, [aria-label*="Sponsored"], [aria-label*="Ads"], .vdL23');
-                        if (parent) return;
+                    const containers = document.querySelectorAll(selectors.join(', '));
+                    
+                    containers.forEach(container => {
+                        if (seenContainers.has(container)) return;
                         
-                        let text = (el.innerText || '').trim();
+                        // Skip ads / sponsored blocks
+                        let adParent = container.closest('div[data-text-ad], .uEvd2e, [aria-label*="Sponsored"], [aria-label*="Ads"], .vdL23');
+                        if (adParent) return;
+                        
+                        let text = (container.innerText || '').trim();
                         if (text.startsWith('Sponsored') || text.startsWith('Ad ')) return;
                         
-                        let href = el.getAttribute('href') || el.href;
-                        if (href) {
-                            links.push({ href: href, title: text });
+                        const heading = container.querySelector('h3');
+                        if (!heading) return;
+                        
+                        seenContainers.add(container);
+                        let title = (heading.innerText || '').trim();
+                        
+                        const mainAnchor = heading.closest('a') || container.querySelector('a:has(h3)') || container.querySelector('div.yuRUbf > a') || container.querySelector('a[href]');
+                        let href = mainAnchor ? (mainAnchor.getAttribute('href') || mainAnchor.href || '') : '';
+                        let dataUrl = mainAnchor ? (mainAnchor.getAttribute('data-url') || mainAnchor.getAttribute('data-href') || mainAnchor.getAttribute('data-rw') || '') : '';
+                        
+                        const citeEl = container.querySelector('cite') || 
+                                       container.querySelector('div.TbwUpd') || 
+                                       container.querySelector('span.cite') || 
+                                       container.querySelector('span[role="text"]') ||
+                                       container.querySelector('div.VwiC3b');
+                                       
+                        let citeText = citeEl ? (citeEl.innerText || citeEl.textContent || '').trim() : '';
+
+                        if (!citeText) {
+                            const possibleSpans = container.querySelectorAll('span, div');
+                            for (let s of possibleSpans) {
+                                let t = (s.innerText || '').trim();
+                                if ((t.includes('http://') || t.includes('https://') || t.includes('.')) && (t.includes('›') || t.includes('>'))) {
+                                    citeText = t;
+                                    break;
+                                }
+                            }
                         }
+
+                        results.push({
+                            href: href,
+                            dataUrl: dataUrl,
+                            citeText: citeText,
+                            title: title
+                        });
                     });
-                    return links;
+                    
+                    return results;
                 }
             """)
 
             for item in raw_links:
                 href = item.get("href", "").strip()
+                data_url = item.get("dataUrl", "").strip()
+                cite_text = item.get("citeText", "").strip()
                 title = item.get("title", "").strip()
 
-                if not href:
-                    continue
+                candidate_url = ""
 
-                # Unwrap Google /url?q= redirect links
-                if "/url?" in href or "/url?q=" in href:
+                # 1. Direct href / dataUrl unwrapping
+                target_from_link = data_url if (data_url and data_url.startswith("http")) else href
+
+                if "/url?" in target_from_link or "/goto?" in target_from_link:
                     try:
-                        parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
-                        if "q" in parsed_qs and parsed_qs["q"]:
-                            href = parsed_qs["q"][0]
+                        parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(target_from_link).query)
+                        for p_name in ["q", "url", "u"]:
+                            if p_name in parsed_qs and parsed_qs[p_name]:
+                                val = parsed_qs[p_name][0]
+                                if val.startswith("http://") or val.startswith("https://"):
+                                    candidate_url = val
+                                    break
                     except Exception:
                         pass
 
-                if not href.startswith("http://") and not href.startswith("https://"):
+                if not candidate_url and (target_from_link.startswith("http://") or target_from_link.startswith("https://")):
+                    parsed_domain = urllib.parse.urlparse(target_from_link).netloc.lower()
+                    is_google = any(g_dom in parsed_domain for g_dom in ["google.com", "google.co", "googleusercontent.com", "gstatic.com", "youtube.com", "schema.org"])
+                    if not is_google:
+                        candidate_url = target_from_link
+
+                # 2. Breadcrumb / Cite Text Fallback Parser if link is encrypted /goto?url= Base64 tracking link
+                if not candidate_url and cite_text:
+                    url_match = re.search(r'(https?://[^\s>›]+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}[^\s>›]*)', cite_text)
+                    if url_match:
+                        clean_cite_text = re.sub(r'[\s>›]+', '/', cite_text)
+                        url_match2 = re.search(r'(https?://[^\s]+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}[^\s]*)', clean_cite_text)
+                        if url_match2:
+                            raw_cite = url_match2.group(1).strip()
+                            if not raw_cite.startswith("http://") and not raw_cite.startswith("https://"):
+                                raw_cite = "https://" + raw_cite
+                            
+                            p_dom = urllib.parse.urlparse(raw_cite).netloc.lower()
+                            is_google = any(g_dom in p_dom for g_dom in ["google.com", "google.co", "googleusercontent.com", "gstatic.com", "youtube.com", "schema.org"])
+                            if not is_google and len(p_dom) > 3 and "." in p_dom:
+                                candidate_url = raw_cite
+
+                if not candidate_url:
                     continue
 
-                # Parse domain to ensure we don't include Google internal pages
-                parsed_domain = urllib.parse.urlparse(href).netloc.lower()
-                
-                # Skip Google's own domains & services
-                is_google_domain = any(
-                    g_dom in parsed_domain for g_dom in [
-                        "google.com", "google.co", "googleusercontent.com",
-                        "gstatic.com", "youtube.com", "schema.org"
-                    ]
-                )
-                if is_google_domain:
-                    continue
-
-                clean_href = href.split("?utm_")[0].split("&utm_")[0]
+                clean_href = candidate_url.split("?utm_")[0].split("&utm_")[0].strip()
 
                 if clean_href not in seen_urls:
                     seen_urls.add(clean_href)

@@ -1,6 +1,6 @@
 {
-  "version": "1.6",
-  "release_notes": "v1.6 Update:\n- Integrated High-Definition Professional Vector Icons (Globe, Play, Stop, Pause, Refresh, Trash, Export)\n- Asynchronous Live Download Progress Bar & Speed Tracking\n- Official Agentik Marketing & Mohammad A. Bakhtawer Authenticode Digital Signature",
+  "version": "1.7",
+  "release_notes": "v1.7 Update:\n- Integrated Breadcrumb (<cite> tag) DOM URL Parser for Google SERP\n- Resolves Encrypted /goto?url= Base64 Tracking Links\n- Flawlessly Extracts Ranking Target Domains from On-Screen Breadcrumbs",
   "download_url": "https://github.com/ma-bakhtawer/google_rank_checker/releases/latest/download/GoogleRankChecker.zip",
   "sha256": ""
 }
