@@ -13,17 +13,24 @@ def create_hd_icons():
     os.makedirs(assets_dir, exist_ok=True)
     size = 64
 
-    # 1. Country Globe Icon (Professional Blue/Teal Vector)
+    # 1. Country Globe Icon (Professional 3D Vector Earth Grid)
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     painter = QPainter(pix)
     painter.setRenderHint(QPainter.Antialiasing)
-    pen = QPen(QColor("#89B4FA"), 3.5)
+    pen = QPen(QColor("#89B4FA"), 3.8, Qt.SolidLine, Qt.RoundCap)
     painter.setPen(pen)
-    painter.drawEllipse(6, 6, 52, 52)
-    painter.drawLine(6, 32, 58, 32)
-    painter.drawLine(32, 6, 32, 58)
-    painter.drawEllipse(16, 6, 32, 52)
+    painter.drawEllipse(5, 5, 54, 54)
+    # Equator & Axis Lines
+    painter.drawLine(5, 32, 59, 32)
+    painter.drawLine(32, 5, 32, 59)
+    # Meridians & Parallels
+    painter.drawEllipse(15, 5, 34, 54)
+    painter.drawEllipse(23, 5, 18, 54)
+    pen_sub = QPen(QColor("#74C7EC"), 2.2, Qt.DashLine)
+    painter.setPen(pen_sub)
+    painter.drawLine(10, 20, 54, 20)
+    painter.drawLine(10, 44, 54, 44)
     painter.end()
     pix.save(os.path.join(assets_dir, "icon_globe.png"))
 

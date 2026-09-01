@@ -1,6 +1,6 @@
 {
-  "version": "1.7",
-  "release_notes": "v1.7 Update:\n- Integrated Breadcrumb (<cite> tag) DOM URL Parser for Google SERP\n- Resolves Encrypted /goto?url= Base64 Tracking Links\n- Flawlessly Extracts Ranking Target Domains from On-Screen Breadcrumbs",
+  "version": "1.8",
+  "release_notes": "v1.8 Update:\n- 2-Phase Live Progress Bar for Download & Extraction\n- Robust Windows Robocopy Overwrite Engine\n- HD Vector Timer & Country Globe Icons\n- Ultra-Fast 0-Delay Search Link Parser",
   "download_url": "https://github.com/ma-bakhtawer/google_rank_checker/releases/latest/download/GoogleRankChecker.zip",
   "sha256": ""
 }
