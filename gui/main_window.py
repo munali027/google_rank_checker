@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QGroupBox, QMessageBox, QFrame, QDialog, QListWidget,
     QListWidgetItem, QRadioButton, QButtonGroup, QCheckBox
 )
-from PySide6.QtCore import Qt, Slot, QThread, Signal, QSize
+from PySide6.QtCore import Qt, Slot, QThread, Signal, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon
 
 from gui.styles import DARK_THEME_QSS
@@ -271,6 +271,11 @@ class MainWindow(QMainWindow):
         self.expected_sha256: str = ""
         self.has_update_available: bool = False
 
+        self.elapsed_active_seconds = 0
+        self.execution_timer = QTimer(self)
+        self.execution_timer.setInterval(1000)
+        self.execution_timer.timeout.connect(self.on_timer_tick)
+
         self.init_ui()
         self.load_saved_session_state()
         self.check_for_updates_async()
@@ -460,6 +465,7 @@ class MainWindow(QMainWindow):
         metrics_layout.setSpacing(10)
         
         self.card_status = MetricCard("Status", "Idle")
+        self.card_time = MetricCard("⏱ Active Time", "00:00:00")
         self.card_current_kw = MetricCard("Current Keyword", "-")
         self.card_completed = MetricCard("Completed / Total", "0 / 0")
         self.card_found = MetricCard("Found Count", "0")
@@ -467,6 +473,7 @@ class MainWindow(QMainWindow):
         self.card_captcha = MetricCard("CAPTCHA Status", "OK")
 
         metrics_layout.addWidget(self.card_status)
+        metrics_layout.addWidget(self.card_time)
         metrics_layout.addWidget(self.card_current_kw)
         metrics_layout.addWidget(self.card_completed)
         metrics_layout.addWidget(self.card_found)
@@ -670,6 +677,11 @@ class MainWindow(QMainWindow):
         self.captcha_banner.setVisible(False)
         self.card_captcha.set_value("OK")
 
+        # Reset and start active execution timer
+        self.elapsed_active_seconds = 0
+        self.card_time.set_value("00:00:00")
+        self.execution_timer.start()
+
         # Spawn worker thread
         self.worker_thread = RankCheckerThread(
             domain=domain,
@@ -694,6 +706,13 @@ class MainWindow(QMainWindow):
 
         self.worker_thread.start()
 
+    def on_timer_tick(self):
+        self.elapsed_active_seconds += 1
+        hrs = self.elapsed_active_seconds // 3600
+        mins = (self.elapsed_active_seconds % 3600) // 60
+        secs = self.elapsed_active_seconds % 60
+        self.card_time.set_value(f"{hrs:02d}:{mins:02d}:{secs:02d}")
+
     @Slot()
     def on_toggle_pause_resume(self):
         if not self.worker_thread:
@@ -705,9 +724,12 @@ class MainWindow(QMainWindow):
             self.card_captcha.set_value("OK")
             self.worker_thread.resume()
             self.update_btn_pause_resume(is_running=True, is_paused=False)
+            if not self.execution_timer.isActive():
+                self.execution_timer.start()
         else:
             # Pause
             self.worker_thread.pause()
+            self.execution_timer.stop()
             self.update_btn_pause_resume(is_running=True, is_paused=True)
 
     def update_btn_start_stop(self, is_running: bool):
@@ -752,6 +774,10 @@ class MainWindow(QMainWindow):
             if self.worker_thread and self.worker_thread.isRunning():
                 self.worker_thread.stop()
             
+            self.execution_timer.stop()
+            self.elapsed_active_seconds = 0
+            self.card_time.set_value("00:00:00")
+
             self.state_manager.reset_state()
             self.table.setRowCount(0)
             self.progress_bar.setValue(0)
@@ -774,6 +800,12 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def on_status_changed(self, status: str):
         self.card_status.set_value(status)
+        if status == "Running":
+            if not self.execution_timer.isActive():
+                self.execution_timer.start()
+        elif status in ["Paused", "CAPTCHA REQUIRED", "Stopped", "Completed", "Error"]:
+            self.execution_timer.stop()
+
         if status == "CAPTCHA REQUIRED":
             self.card_captcha.set_value("⚠️ CAPTCHA")
             self.update_btn_pause_resume(is_running=True, is_paused=True)
@@ -803,6 +835,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_captcha_detected(self, msg: str):
+        self.execution_timer.stop()
         self.captcha_banner.setVisible(True)
         self.card_captcha.set_value("⚠️ REQUIRED")
         self.update_btn_pause_resume(is_running=True, is_paused=True)
@@ -812,18 +845,27 @@ class MainWindow(QMainWindow):
         self.captcha_banner.setVisible(False)
         self.card_captcha.set_value("OK")
         self.update_btn_pause_resume(is_running=True, is_paused=False)
+        if not self.execution_timer.isActive():
+            self.execution_timer.start()
 
     @Slot()
     def on_finished(self):
+        self.execution_timer.stop()
+        hrs = self.elapsed_active_seconds // 3600
+        mins = (self.elapsed_active_seconds % 3600) // 60
+        secs = self.elapsed_active_seconds % 60
+        time_str = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+
         self.update_btn_start_stop(is_running=False)
         self.update_btn_pause_resume(is_running=False, is_paused=False)
         self.captcha_banner.setVisible(False)
         self.card_current_kw.set_value("-")
         
+        self.log_msg(f"\n[EXECUTION TIME] Total active execution time: {time_str}")
         csv_path = self.txt_csv_path.text().strip()
         if csv_path:
             out_file = os.path.join(os.path.dirname(os.path.abspath(csv_path)), "rank_results_autosave.csv")
-            self.log_msg(f"\n[EXPORT] All rank results saved to: '{out_file}'")
+            self.log_msg(f"[EXPORT] All rank results saved to: '{out_file}'")
 
     def add_or_update_table_row(self, res: Dict[str, Any]):
         kw = res.get("keyword", "")

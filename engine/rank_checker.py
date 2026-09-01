@@ -191,31 +191,6 @@ class RankCheckerThread(QThread):
 
         return url
 
-    @staticmethod
-    def compute_relevance_score(keyword: str, url: str, title: str = "") -> float:
-        """
-        Universal semantic relevance scorer between search keyword and candidate URL/Title.
-        """
-        if not keyword or not url:
-            return 0.0
-
-        kw_clean = re.sub(r'[^\w\s\u0600-\u06FF]', ' ', keyword.lower())
-        tokens = [t for t in kw_clean.split() if len(t) > 1]
-        if not tokens:
-            return 1.0
-
-        url_lower = url.lower()
-        title_lower = title.lower() if title else ""
-
-        score = 0.0
-        for tok in tokens:
-            if tok in url_lower:
-                score += 2.5
-            if tok in title_lower:
-                score += 1.0
-
-        return score
-
     def parse_proxy(self) -> Optional[Dict[str, str]]:
         if not self.proxy_string:
             return None
@@ -493,14 +468,15 @@ class RankCheckerThread(QThread):
                 organic_links = self.extract_organic_links(page)
                 self.log_message.emit(f"    (Found {len(organic_links)} organic results on Page {page_num})")
                 
-                page_matches = []
+                # Check for target domain matches
                 for local_idx, link_info in enumerate(organic_links, start=1):
                     global_rank = (page_num - 1) * 10 + local_idx
                     url = link_info["url"]
-                    title = link_info.get("title", "")
 
                     if self.is_domain_match(self.target_domain, url):
-                        rel_score = self.compute_relevance_score(keyword, url, title)
+                        self.log_message.emit(f"  [★ FOUND] Domain '{self.target_domain}' found at Rank #{global_rank} (Page {page_num}, Pos {local_idx})!")
+                        self.log_message.emit(f"    URL: {url}")
+                        
                         match_entry = {
                             "keyword": keyword,
                             "domain": self.target_domain,
@@ -509,25 +485,12 @@ class RankCheckerThread(QThread):
                             "ranking_url": url,
                             "target_country": self.country_name,
                             "checked_at": now_str,
-                            "status": "Found",
-                            "score": rel_score
+                            "status": "Found"
                         }
-                        page_matches.append(match_entry)
+                        found_results.append(match_entry)
 
-                if page_matches:
-                    if self.scan_mode == "single":
-                        best_match = max(page_matches, key=lambda m: (m["score"], -m["rank"]))
-                        best_match.pop("score", None)
-                        self.log_message.emit(f"  [★ FOUND] Domain '{self.target_domain}' matched at Rank #{best_match['rank']} (Page {page_num})!")
-                        self.log_message.emit(f"    URL: {best_match['ranking_url']}")
-                        found_results.append(best_match)
-                        return found_results
-                    else:
-                        for m in page_matches:
-                            m.pop("score", None)
-                            self.log_message.emit(f"  [★ FOUND] Domain '{self.target_domain}' found at Rank #{m['rank']} (Page {page_num})!")
-                            self.log_message.emit(f"    URL: {m['ranking_url']}")
-                            found_results.append(m)
+                        if self.scan_mode == "single":
+                            return found_results
 
             except Exception as e:
                 self.log_message.emit(f"  [ERROR] Error checking page {page_num}: {e}")
