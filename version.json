@@ -1,6 +1,6 @@
 {
-  "version": "1.8",
-  "release_notes": "v1.8 Update:\n- 2-Phase Live Progress Bar for Download & Extraction\n- Robust Windows Robocopy Overwrite Engine\n- HD Vector Timer & Country Globe Icons\n- Ultra-Fast 0-Delay Search Link Parser",
+  "version": "1.9",
+  "release_notes": "v1.9 Update:\n- System VPN Auto-Detection & WebRTC Leak Protection\n- Native Country Language & Locale Sync (Arabic RTL, Russian, etc.)\n- Overhauled 2-Phase Robocopy Auto-Updater\n- HD Vector Timer & Earth Globe Icons\n- Ultra-Fast Zero-Delay Pagination Engine",
   "download_url": "https://github.com/ma-bakhtawer/google_rank_checker/releases/latest/download/GoogleRankChecker.zip",
   "sha256": ""
 }

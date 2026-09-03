@@ -34,8 +34,9 @@ COUNTRY_DOMAINS = {
     "Canada": {"base": "https://www.google.ca", "gl": "ca", "hl": "en", "tz": "America/Toronto", "locale": "en-CA"},
     "Pakistan": {"base": "https://www.google.com.pk", "gl": "pk", "hl": "en", "tz": "Asia/Karachi", "locale": "en-PK"},
     "India": {"base": "https://www.google.co.in", "gl": "in", "hl": "en", "tz": "Asia/Kolkata", "locale": "en-IN"},
-    "United Arab Emirates": {"base": "https://www.google.ae", "gl": "ae", "hl": "en", "tz": "Asia/Dubai", "locale": "en-AE"},
+    "United Arab Emirates": {"base": "https://www.google.ae", "gl": "ae", "hl": "ar", "tz": "Asia/Dubai", "locale": "ar-AE"},
     "Saudi Arabia": {"base": "https://www.google.com.sa", "gl": "sa", "hl": "ar", "tz": "Asia/Riyadh", "locale": "ar-SA"},
+    "Russia": {"base": "https://www.google.ru", "gl": "ru", "hl": "ru", "tz": "Europe/Moscow", "locale": "ru-RU"},
     "Germany": {"base": "https://www.google.de", "gl": "de", "hl": "de", "tz": "Europe/Berlin", "locale": "de-DE"},
     "France": {"base": "https://www.google.fr", "gl": "fr", "hl": "fr", "tz": "Europe/Paris", "locale": "fr-FR"},
     "Spain": {"base": "https://www.google.es", "gl": "es", "hl": "es", "tz": "Europe/Madrid", "locale": "es-ES"},
@@ -248,7 +249,9 @@ class RankCheckerThread(QThread):
             "--start-maximized",
             "--disable-infobars",
             "--no-first-run",
-            "--no-service-autorun"
+            "--no-service-autorun",
+            "--proxy-auto-detect",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"
         ]
 
         ext_path = os.path.normpath(os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "extensions", "remove_breadcrumbs")))
@@ -426,7 +429,7 @@ class RankCheckerThread(QThread):
             
             try:
                 page.goto(search_url, wait_until="domcontentloaded", timeout=18000)
-                time.sleep(0.5)
+                time.sleep(0.1)
 
                 if CaptchaHandler.is_captcha_present(page):
                     self.log_message.emit(f"  [!] CAPTCHA / Rate limit detected on page {page_num}.")
@@ -462,7 +465,7 @@ class RankCheckerThread(QThread):
                             "status": "CAPTCHA"
                         }]
                     
-                    time.sleep(0.8)
+                    time.sleep(0.5)
 
                 # Instant extraction with 0 delay for non-target links
                 organic_links = self.extract_organic_links(page)
@@ -495,7 +498,7 @@ class RankCheckerThread(QThread):
             except Exception as e:
                 self.log_message.emit(f"  [ERROR] Error checking page {page_num}: {e}")
                 
-            self.random_delay(0.6, 1.2)
+            self.random_delay(0.2, 0.4)
 
         if found_results:
             return found_results
@@ -520,12 +523,6 @@ class RankCheckerThread(QThread):
         """
         results = []
         seen_urls = set()
-
-        try:
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(0.1)
-        except Exception:
-            pass
 
         try:
             raw_links = page.evaluate("""

@@ -4,8 +4,8 @@
 # http://msdn.microsoft.com/en-us/library/ms646997.aspx
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 8, 0, 0),
-    prodvers=(1, 8, 0, 0),
+    filevers=(1, 9, 0, 0),
+    prodvers=(1, 9, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -21,12 +21,12 @@ VSVersionInfo(
           [
             StringStruct(u'CompanyName', u'Agentik Marketing'),
             StringStruct(u'FileDescription', u'Google Keyword Rank Checker Application'),
-            StringStruct(u'FileVersion', u'1.8.0.0'),
+            StringStruct(u'FileVersion', u'1.9.0.0'),
             StringStruct(u'InternalName', u'GoogleRankChecker'),
             StringStruct(u'LegalCopyright', u'Copyright \xa9 2026 Mohammad A. Bakhtawer. All rights reserved.'),
             StringStruct(u'OriginalFilename', u'GoogleRankChecker.exe'),
             StringStruct(u'ProductName', u'Google Keyword Rank Checker'),
-            StringStruct(u'ProductVersion', u'1.8.0.0')
+            StringStruct(u'ProductVersion', u'1.9.0.0')
           ]
         )
       ]
